@@ -1,10 +1,10 @@
-package com.captureboard.hdmiin.ui
+package com.hcc.dvdplayer.ui
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
-import com.captureboard.hdmiin.databinding.ItemSourceBinding
-import com.captureboard.hdmiin.source.ListedSource
+import com.hcc.dvdplayer.databinding.ItemSourceBinding
+import com.hcc.dvdplayer.source.ListedSource
 
 class SourceAdapter(
     private val onClick: (ListedSource) -> Unit,

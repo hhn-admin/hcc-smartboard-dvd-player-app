@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.source
+package com.hcc.dvdplayer.source
 
 import android.content.BroadcastReceiver
 import android.content.Context

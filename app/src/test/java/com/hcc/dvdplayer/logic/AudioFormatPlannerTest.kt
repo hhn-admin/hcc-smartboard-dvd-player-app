@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.logic
+package com.hcc.dvdplayer.logic
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

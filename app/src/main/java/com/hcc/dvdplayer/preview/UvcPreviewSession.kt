@@ -1,10 +1,10 @@
-package com.captureboard.hdmiin.preview
+package com.hcc.dvdplayer.preview
 
 import android.hardware.usb.UsbDevice
 import android.util.Log
 import android.view.Surface
-import com.captureboard.hdmiin.logic.PreviewSizeChooser
-import com.captureboard.hdmiin.logic.VideoMode
+import com.hcc.dvdplayer.logic.PreviewSizeChooser
+import com.hcc.dvdplayer.logic.VideoMode
 import com.herohan.uvcapp.CameraHelper
 import com.herohan.uvcapp.ICameraHelper
 import com.serenegiant.usb.Size

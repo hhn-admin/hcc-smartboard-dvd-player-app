@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HDMI In"
+rootProject.name = "DVD Player"
 include(":app")

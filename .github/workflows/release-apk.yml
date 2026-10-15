@@ -78,7 +78,7 @@ jobs:
         if: steps.signing.outputs.signing == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: hdmi-in-release
+          name: dvd-player-release
           path: app/build/outputs/apk/release/*-release.apk
           if-no-files-found: error
 

@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.logic
+package com.hcc.dvdplayer.logic
 
 /**
  * Same match the UVCAndroid device filter uses: USB video class (14), or a
