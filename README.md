@@ -45,6 +45,109 @@ The debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
 
 GitHub Actions (`.github/workflows/build-debug-apk.yml`) runs the unit tests and uploads that debug APK as the `hdmi-in-debug` artifact.
 
+A release APK for MDM is a separate build. See [Signed release for Smart MDM](#signed-release-for-smart-mdm).
+
+## Signed release for Smart MDM
+
+Smart MDM (and any other device-management install) needs a release APK signed with a key you keep. The package name is `com.captureboard.hdmiin`. That id stays fixed: changing it makes the next upload look like a different app, and the board will not update in place.
+
+R8 and resource shrinking are off. The UVC library loads native code and callback classes that shrinking has a habit of breaking. Release builds are still signed and not debuggable.
+
+The keystore and the passwords are not in git. Gradle signs the release build only when these environment variables are set:
+
+| Variable | Meaning |
+| --- | --- |
+| `ANDROID_KEYSTORE_PATH` | Path to the `.jks` file on the machine that is building |
+| `ANDROID_KEYSTORE_PASSWORD` | Store password |
+| `ANDROID_KEY_ALIAS` | Key alias |
+| `ANDROID_KEY_PASSWORD` | Key password |
+
+CI does not use `ANDROID_KEYSTORE_PATH`. It decodes a base64 copy of the keystore from a GitHub Actions secret, writes it to a temp file, and then sets the path itself.
+
+Without those values, `./gradlew assembleRelease` still compiles and writes an **unsigned** APK. Do not send that file to MDM. Android will refuse it, or a later signed build will not count as an update.
+
+### Create the keystore
+
+Run this once, on a machine you control. Keep the `.jks` file and both passwords somewhere that is not the git repo. If this key is lost, MDM cannot update the installed app; every board would need the old package removed first.
+
+```bash
+keytool -genkeypair -v \
+  -keystore hdmi-in-release.jks \
+  -storetype PKCS12 \
+  -alias hdmi-in \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000 \
+  -dname "CN=HDMI In, O=Smart Board, C=US"
+```
+
+`keytool` asks for a store password and a key password. Type the same password both times. This command creates a PKCS12 keystore, and PKCS12 does not keep a separate key password. Put that one password in both `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD`. Validity is about 27 years, which is what you want for a fleet key.
+
+Turn the file into one line of base64. The secret must be the raw base64 text, not a `data:` URL.
+
+```bash
+# Linux
+base64 -w 0 hdmi-in-release.jks > hdmi-in-release.jks.b64
+
+# macOS
+base64 -i hdmi-in-release.jks | tr -d '\n' > hdmi-in-release.jks.b64
+```
+
+Delete the `.b64` file after the secret is saved. `*.jks` and `*.keystore` are gitignored; do not force-add them.
+
+### Repository secrets
+
+This environment cannot create the secrets. Add them on the repo yourself:
+
+1. Open the repository on GitHub.
+2. Go to **Settings → Secrets and variables → Actions**.
+3. Choose **New repository secret** for each of these names.
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | The contents of `hdmi-in-release.jks.b64` |
+| `ANDROID_KEYSTORE_PASSWORD` | The store password from `keytool` |
+| `ANDROID_KEY_ALIAS` | `hdmi-in` (or whatever `-alias` you used) |
+| `ANDROID_KEY_PASSWORD` | The key password from `keytool` |
+
+Until all four exist, the Release APK workflow still succeeds. It builds an unsigned release APK, prints that signing was skipped, and does **not** upload `hdmi-in-release`. After the secrets are saved, the next run on `main` uploads the signed APK as the `hdmi-in-release` artifact.
+
+A local signed build uses the file path, not the base64 secret:
+
+```bash
+export ANDROID_KEYSTORE_PATH="$HOME/keys/hdmi-in-release.jks"
+export ANDROID_KEYSTORE_PASSWORD='store-password'
+export ANDROID_KEY_ALIAS='hdmi-in'
+export ANDROID_KEY_PASSWORD='key-password'
+./gradlew assembleRelease
+```
+
+The signed file is `app/build/outputs/apk/release/hdmi-in-1.0.0-release.apk` (the version in the name follows `hdmiVersionName`).
+
+### When the workflow publishes
+
+`.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
+
+- Pull requests and `main` pushes upload `hdmi-in-release` only when the four secrets are set.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.1` with `hdmiVersionName = "1.0.0"` fails the job.
+- On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
+
+### Bump a version for an MDM update
+
+MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
+
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.1`, `1.1.0`, …). Leave `applicationId` as `com.captureboard.hdmiin`.
+2. Merge that change to `main`.
+3. Tag the merge commit and push the tag:
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+4. Download `hdmi-in-1.0.1-release.apk` from the Actions artifact `hdmi-in-release`, or from the GitHub Release attached to that tag.
+5. Upload that APK in Smart MDM as an update to the existing HDMI In app. Do not create a second app entry with a different package name, and do not switch keystores.
+
 ## Sideload onto a smart board
 
 Boards usually have no Play Store. Any of these work:

@@ -1,0 +1,90 @@
+name: Release APK
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  release-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install compile SDK
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag ${GITHUB_REF_NAME} must look like v1.2.3"
+            exit 1
+          fi
+          name="$(sed -n 's/^val hdmiVersionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts)"
+          if [[ "$tag" != "$name" ]]; then
+            echo "Tag v${tag} does not match hdmiVersionName ${name} in app/build.gradle.kts"
+            exit 1
+          fi
+
+      - name: Prepare release signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" || -z "${ANDROID_KEYSTORE_PASSWORD}" || -z "${ANDROID_KEY_ALIAS}" || -z "${ANDROID_KEY_PASSWORD}" ]]; then
+            echo "signing=false" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are not all set."
+            echo "The release variant will be built unsigned, and the signed artifact will be skipped."
+            echo "Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
+            exit 0
+          fi
+          keystore="${RUNNER_TEMP}/hdmi-in-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 -d > "$keystore"
+          keytool -list -keystore "$keystore" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          echo "signing=true" >> "$GITHUB_OUTPUT"
+          echo "keystore=${keystore}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload signed release APK
+        if: steps.signing.outputs.signing == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdmi-in-release
+          path: app/build/outputs/apk/release/*-release.apk
+          if-no-files-found: error
+
+      - name: Attach APK to GitHub Release
+        if: steps.signing.outputs.signing == 'true' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*-release.apk
+          generate_release_notes: true

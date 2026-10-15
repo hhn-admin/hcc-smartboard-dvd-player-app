@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// MDM updates identify the app by applicationId and require a higher versionCode
+// signed with the same certificate. Do not change applicationId.
+// Bump both version fields together, then tag the commit v<hdmiVersionName>.
+val hdmiVersionCode = 1
+val hdmiVersionName = "1.0.0"
+
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
 android {
     namespace = "com.captureboard.hdmiin"
     compileSdk = 35
@@ -11,17 +22,35 @@ android {
         applicationId = "com.captureboard.hdmiin"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = hdmiVersionCode
+        versionName = hdmiVersionName
+    }
+
+    if (releaseKeystorePath != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
+            // R8 stays off. UVCAndroid loads JNI and reflective callback classes;
+            // shrinking that stack is what breaks preview on devices. The keep
+            // rules in proguard-rules.pro are there if minify is turned on later.
             isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -49,6 +78,10 @@ android {
     lint {
         abortOnError = true
     }
+}
+
+base {
+    archivesName.set("hdmi-in-$hdmiVersionName")
 }
 
 dependencies {
