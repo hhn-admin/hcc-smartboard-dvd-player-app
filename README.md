@@ -1,17 +1,16 @@
 # DVD Player
 
-Full-screen live view of a USB HDMI capture card on an Android tablet or smart board. Plug a DVD player (or any other HDMI source) into a UVC capture dongle, plug the dongle into the board, tap the source, and the picture fills the screen. Sound from the dongle's USB audio plays through the board's normal media output.
+Full-screen live view of a USB HDMI capture card on an Android tablet or smart board. Plug a DVD player (or any other HDMI source) into the DVD capture card, plug that card into the board, and the picture fills the screen. Sound from the card's USB audio plays through the board's normal media output.
 
 The app does not use Google Play services. It is meant to be sideloaded.
 
 ## What you do
 
 1. Open **DVD Player**.
-2. Allow camera and microphone access. Android labels the capture card's USB audio as a microphone. That permission is not used for the built-in mic.
-3. Tap the source. If Android asks for USB permission, allow it.
-4. The picture goes full screen and the screen stays on. Back (or the on-screen Back button, which appears when you tap the picture) returns to the list.
-
-One source is still one tap. The list is there so a second card or a system camera is an explicit choice. Plugging or unplugging a card updates the list. Unplugging the card that is playing returns to the list.
+2. Plug in the DVD capture card. Until it is detected, the screen shows that sentence, a large plug icon, and an arrow.
+3. Allow camera and microphone access. Android labels the card's USB audio as a microphone. That permission is not used for the built-in mic.
+4. When only one source is connected, playback starts on its own after permission is granted (and when the card is plugged in later, if permission was already granted). If more than one source is listed, tap the USB source. An arrow points at that row when there is a single USB source.
+5. If Android asks for USB permission, allow it. The picture goes full screen and the screen stays on. Back (or the on-screen Back button, which appears when you tap the picture) returns to the list and stays there. Unplugging the card that is playing also returns to the list.
 
 ## How video is opened
 
@@ -39,7 +38,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.0-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.1-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -122,30 +121,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.0.0-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.1-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.1` with `hdmiVersionName = "1.0.0"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.2` with `hdmiVersionName = "1.0.1"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.1`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.2`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
-4. Download `dvd-player-1.0.1-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.0.2-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -156,7 +155,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.0.0-debug.apk
+adb install -r dvd-player-1.0.1-debug.apk
 ```
 
 `adb install -r -g` also grants the runtime permissions, which helps when the settings UI is awkward.
@@ -165,7 +164,7 @@ adb install -r dvd-player-1.0.0-debug.apk
 
 Then open **DVD Player** from the launcher. On Android TV-style launchers it is registered as a leanback app as well.
 
-Plug the capture card into a USB host port, not a "device" or charge-only port. Hubs are a frequent cause of a card that never enumerates.
+Plug in the DVD capture card on a USB host port, not a "device" or charge-only port. Hubs are a frequent cause of a card that never enumerates.
 
 ## Limitations
 

@@ -7,11 +7,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.animation.AnimationUtils
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.hcc.dvdplayer.databinding.ActivityPickerBinding
+import com.hcc.dvdplayer.logic.PickerPrompt
 import com.hcc.dvdplayer.source.ListedSource
 import com.hcc.dvdplayer.source.SourceCatalog
 import com.hcc.dvdplayer.source.UsbEvents
@@ -25,18 +27,31 @@ class PickerActivity : AppCompatActivity() {
     private var signature = ""
     private var pending: ListedSource? = null
     private var permissionDenied = false
+    private var returnedFromPlayer = false
+    private var openInProgress = false
+    private var inRefresh = false
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         val source = pending
         pending = null
-        permissionDenied = missingPermissions().isNotEmpty()
+        val granted = missingPermissions().isEmpty()
+        permissionDenied = !granted
         renderPermission()
-        if (source != null) open(source)
+        if (granted) {
+            returnedFromPlayer = false
+            if (source != null) {
+                open(source)
+            } else {
+                refresh()
+            }
+        }
     }
 
     private val player = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        openInProgress = false
+        returnedFromPlayer = true
         val notice = result.data?.getStringExtra(PlayerActivity.EXTRA_NOTICE)
         if (notice.isNullOrBlank()) {
             binding.notice.visibility = View.GONE
@@ -80,6 +95,7 @@ class PickerActivity : AppCompatActivity() {
 
     override fun onStop() {
         handler.removeCallbacks(poll)
+        binding.emptyArrow.clearAnimation()
         super.onStop()
     }
 
@@ -89,30 +105,59 @@ class PickerActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        val sources = catalog.list()
-        val nextSignature = sources.joinToString("\n") { it.signature() }
-        if (nextSignature != signature) {
-            signature = nextSignature
-            adapter.submit(sources)
+        if (inRefresh) return
+        inRefresh = true
+        try {
+            val sources = catalog.list()
+            val nextSignature = sources.joinToString("\n") { it.signature() }
+            val pointed = PickerPrompt.pointedSource(sources)
+            if (nextSignature != signature) {
+                signature = nextSignature
+                adapter.submit(sources, pointed)
+            }
+            val empty = sources.isEmpty()
+            binding.emptyState.visibility = if (empty) View.VISIBLE else View.GONE
+            binding.sources.visibility = if (empty) View.GONE else View.VISIBLE
+            val host = catalog.usbHostAvailable()
+            binding.empty.setText(
+                if (host) R.string.plug_in_dvd_capture_card else R.string.empty_no_usb_host,
+            )
+            binding.emptyArrow.visibility = if (host) View.VISIBLE else View.GONE
+            binding.emptyPlug.visibility = if (host) View.VISIBLE else View.GONE
+            if (empty && host) {
+                if (binding.emptyArrow.animation == null) {
+                    binding.emptyArrow.startAnimation(
+                        AnimationUtils.loadAnimation(this, R.anim.arrow_nudge_down),
+                    )
+                }
+            } else {
+                binding.emptyArrow.clearAnimation()
+            }
+            val tapUsb = sources.isEmpty() || sources.any { it.kind == ListedSource.Kind.USB_UVC }
+            binding.stepTapLabel.setText(if (tapUsb) R.string.step_tap else R.string.step_tap_only)
+            binding.stepPlug.isActivated = empty
+            binding.stepTap.isActivated = !empty
+            renderPermission()
+            if (PickerPrompt.shouldAutoStart(
+                    sourceCount = sources.size,
+                    permissionsGranted = missingPermissions().isEmpty(),
+                    returnedFromPlayer = returnedFromPlayer,
+                    openInProgress = openInProgress,
+                )
+            ) {
+                open(sources.first())
+            }
+            if (sources.size != 1) returnedFromPlayer = false
+        } finally {
+            inRefresh = false
         }
-        binding.empty.visibility = if (sources.isEmpty()) View.VISIBLE else View.GONE
-        binding.sources.visibility = if (sources.isEmpty()) View.GONE else View.VISIBLE
-        binding.empty.text = when {
-            !catalog.usbHostAvailable() -> getString(R.string.empty_no_usb_host)
-            else -> getString(R.string.empty_sources)
-        }
-        if (sources.size == 1) {
-            binding.subtitle.setText(R.string.picker_subtitle_one)
-        } else {
-            binding.subtitle.setText(R.string.picker_subtitle)
-        }
-        renderPermission()
     }
 
     private fun onSourceClicked(source: ListedSource) {
         binding.notice.visibility = View.GONE
         val missing = missingPermissions()
         if (missing.isEmpty()) {
+            returnedFromPlayer = false
             open(source)
         } else {
             pending = source
@@ -121,7 +166,10 @@ class PickerActivity : AppCompatActivity() {
     }
 
     private fun open(source: ListedSource) {
+        if (openInProgress) return
+        openInProgress = true
         if (source.kind == ListedSource.Kind.CAMERA2_EXTERNAL && !has(Manifest.permission.CAMERA)) {
+            openInProgress = false
             binding.notice.setText(R.string.camera_permission_required)
             binding.notice.visibility = View.VISIBLE
             renderPermission()
@@ -130,11 +178,15 @@ class PickerActivity : AppCompatActivity() {
         val intent = Intent(this, PlayerActivity::class.java)
         when (source.kind) {
             ListedSource.Kind.USB_UVC -> {
-                val name = source.usbDeviceName ?: return
+                val name = source.usbDeviceName ?: run {
+                    openInProgress = false
+                    return
+                }
                 if (catalog.findUsbDevice(name) == null) {
+                    openInProgress = false
                     binding.notice.setText(R.string.device_unplugged)
                     binding.notice.visibility = View.VISIBLE
-                    refresh()
+                    if (!inRefresh) refresh()
                     return
                 }
                 intent.putExtra(PlayerActivity.EXTRA_KIND, PlayerActivity.KIND_USB)
@@ -161,6 +213,8 @@ class PickerActivity : AppCompatActivity() {
                 },
             )
         } else if (missing.isNotEmpty()) {
+            val sources = catalog.list()
+            if (sources.size == 1) pending = sources.first()
             permissionRequest.launch(missing)
         }
     }

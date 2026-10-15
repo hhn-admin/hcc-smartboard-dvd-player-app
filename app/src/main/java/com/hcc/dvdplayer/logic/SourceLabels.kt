@@ -9,12 +9,12 @@ object SourceLabels {
         return when {
             product.isNotEmpty() -> product
             manufacturer.isNotEmpty() -> manufacturer
-            else -> "USB HDMI capture"
+            else -> "DVD capture card"
         }
     }
 
     fun usbSubtitle(vendorId: Int, productId: Int): String {
-        return String.format(Locale.US, "USB capture · %04x:%04x", vendorId, productId)
+        return String.format(Locale.US, "USB source · %04x:%04x", vendorId, productId)
     }
 
     fun cameraTitle(cameraId: String): String = "External camera $cameraId"
