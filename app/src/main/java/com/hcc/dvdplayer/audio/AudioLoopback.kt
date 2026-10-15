@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.audio
+package com.hcc.dvdplayer.audio
 
 import android.Manifest
 import android.content.Context
@@ -18,8 +18,8 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.captureboard.hdmiin.logic.AudioFormatPlanner
-import com.captureboard.hdmiin.logic.PcmDelayLine
+import com.hcc.dvdplayer.logic.AudioFormatPlanner
+import com.hcc.dvdplayer.logic.PcmDelayLine
 
 /**
  * Reads the capture card's USB audio interface and writes it to an [AudioTrack]

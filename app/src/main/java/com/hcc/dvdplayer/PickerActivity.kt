@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin
+package com.hcc.dvdplayer
 
 import android.Manifest
 import android.content.Intent
@@ -11,11 +11,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.captureboard.hdmiin.databinding.ActivityPickerBinding
-import com.captureboard.hdmiin.source.ListedSource
-import com.captureboard.hdmiin.source.SourceCatalog
-import com.captureboard.hdmiin.source.UsbEvents
-import com.captureboard.hdmiin.ui.SourceAdapter
+import com.hcc.dvdplayer.databinding.ActivityPickerBinding
+import com.hcc.dvdplayer.source.ListedSource
+import com.hcc.dvdplayer.source.SourceCatalog
+import com.hcc.dvdplayer.source.UsbEvents
+import com.hcc.dvdplayer.ui.SourceAdapter
 
 class PickerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPickerBinding

@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// MDM updates identify the app by applicationId and require a higher versionCode
-// signed with the same certificate. Do not change applicationId.
+// MDM updates identify the app by applicationId (com.hcc.dvdplayer) and require a
+// higher versionCode signed with the same certificate. Do not change applicationId.
 // Bump both version fields together, then tag the commit v<hdmiVersionName>.
 val hdmiVersionCode = 1
 val hdmiVersionName = "1.0.0"
@@ -15,11 +15,11 @@ val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
 android {
-    namespace = "com.captureboard.hdmiin"
+    namespace = "com.hcc.dvdplayer"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.captureboard.hdmiin"
+        applicationId = "com.hcc.dvdplayer"
         minSdk = 24
         targetSdk = 35
         versionCode = hdmiVersionCode
@@ -81,7 +81,7 @@ android {
 }
 
 base {
-    archivesName.set("hdmi-in-$hdmiVersionName")
+    archivesName.set("dvd-player-$hdmiVersionName")
 }
 
 dependencies {

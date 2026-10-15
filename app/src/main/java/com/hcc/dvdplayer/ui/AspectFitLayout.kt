@@ -1,9 +1,9 @@
-package com.captureboard.hdmiin.ui
+package com.hcc.dvdplayer.ui
 
 import android.content.Context
 import android.util.AttributeSet
 import android.widget.FrameLayout
-import com.captureboard.hdmiin.logic.PreviewSizeChooser
+import com.hcc.dvdplayer.logic.PreviewSizeChooser
 
 /**
  * Sizes its single child to the video aspect ratio and centers it, so a 16:9

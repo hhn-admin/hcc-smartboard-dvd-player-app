@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.logic
+package com.hcc.dvdplayer.logic
 
 import java.util.Locale
 

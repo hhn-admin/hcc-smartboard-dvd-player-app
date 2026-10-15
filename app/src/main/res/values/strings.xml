@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HDMI In</string>
-    <string name="picker_title">HDMI In</string>
+    <string name="app_name">DVD Player</string>
+    <string name="picker_title">DVD Player</string>
     <string name="picker_subtitle">Tap a video source. Sound from the capture card plays through this device.</string>
     <string name="picker_subtitle_one">One source found. Tap it to fill the screen.</string>
     <string name="empty_sources">Plug a USB HDMI capture card into this device. Connect the DVD player, or any other HDMI source, to the card.</string>

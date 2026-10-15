@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.source
+package com.hcc.dvdplayer.source
 
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
@@ -6,8 +6,8 @@ import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
-import com.captureboard.hdmiin.logic.SourceLabels
-import com.captureboard.hdmiin.logic.UsbVideoFilter
+import com.hcc.dvdplayer.logic.SourceLabels
+import com.hcc.dvdplayer.logic.UsbVideoFilter
 
 data class ListedSource(
     val kind: Kind,

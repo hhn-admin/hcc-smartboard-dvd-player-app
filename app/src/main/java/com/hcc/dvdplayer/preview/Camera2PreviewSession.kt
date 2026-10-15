@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.preview
+package com.hcc.dvdplayer.preview
 
 import android.Manifest
 import android.content.Context
@@ -20,8 +20,8 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import java.util.concurrent.Executor
 import androidx.core.content.ContextCompat
-import com.captureboard.hdmiin.logic.PreviewSizeChooser
-import com.captureboard.hdmiin.logic.VideoMode
+import com.hcc.dvdplayer.logic.PreviewSizeChooser
+import com.hcc.dvdplayer.logic.VideoMode
 
 /**
  * Preview path for boards whose camera HAL already exposes the USB camera as an

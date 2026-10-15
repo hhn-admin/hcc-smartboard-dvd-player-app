@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.logic
+package com.hcc.dvdplayer.logic
 
 /**
  * Byte queue that holds a fixed lead of PCM so playback starts only after

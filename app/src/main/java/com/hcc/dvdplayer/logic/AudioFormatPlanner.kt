@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin.logic
+package com.hcc.dvdplayer.logic
 
 /**
  * Plans the PCM format used to loop USB audio (UAC) back out as media audio.

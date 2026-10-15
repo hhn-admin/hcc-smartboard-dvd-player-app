@@ -1,4 +1,4 @@
-# HDMI In
+# DVD Player
 
 Full-screen live view of a USB HDMI capture card on an Android tablet or smart board. Plug a DVD player (or any other HDMI source) into a UVC capture dongle, plug the dongle into the board, tap the source, and the picture fills the screen. Sound from the dongle's USB audio plays through the board's normal media output.
 
@@ -6,7 +6,7 @@ The app does not use Google Play services. It is meant to be sideloaded.
 
 ## What you do
 
-1. Open **HDMI In**.
+1. Open **DVD Player**.
 2. Allow camera and microphone access. Android labels the capture card's USB audio as a microphone. That permission is not used for the built-in mic.
 3. Tap the source. If Android asks for USB permission, allow it.
 4. The picture goes full screen and the screen stays on. Back (or the on-screen Back button, which appears when you tap the picture) returns to the list.
@@ -39,17 +39,17 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.0-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
-GitHub Actions (`.github/workflows/build-debug-apk.yml`) runs the unit tests and uploads that debug APK as the `hdmi-in-debug` artifact.
+GitHub Actions (`.github/workflows/build-debug-apk.yml`) runs the unit tests and uploads that debug APK as the `dvd-player-debug` artifact.
 
 A release APK for MDM is a separate build. See [Signed release for Smart MDM](#signed-release-for-smart-mdm).
 
 ## Signed release for Smart MDM
 
-Smart MDM (and any other device-management install) needs a release APK signed with a key you keep. The package name is `com.captureboard.hdmiin`. That id stays fixed: changing it makes the next upload look like a different app, and the board will not update in place.
+Smart MDM (and any other device-management install) needs a release APK signed with a key you keep. The package name is `com.hcc.dvdplayer`. That id stays fixed: changing it makes the next upload look like a different app, and the board will not update in place.
 
 R8 and resource shrinking are off. The UVC library loads native code and callback classes that shrinking has a habit of breaking. Release builds are still signed and not debuggable.
 
@@ -68,7 +68,7 @@ Without those values, `./gradlew assembleRelease` still compiles and writes an *
 
 ### Create the keystore
 
-Run this once, on a machine you control. Keep the `.jks` file and both passwords somewhere that is not the git repo. If this key is lost, MDM cannot update the installed app; every board would need the old package removed first.
+Run this once, on a machine you control. Keep the `.jks` file and both passwords somewhere that is not the git repo. If this key is lost, MDM cannot update the installed app; every board would need the old package removed first. The launcher name is DVD Player. The keystore file name, alias, and certificate subject stay as they were when the secrets were created. Do not make a new key just to match the new name.
 
 ```bash
 keytool -genkeypair -v \
@@ -110,7 +110,7 @@ This environment cannot create the secrets. Add them on the repo yourself:
 | `ANDROID_KEY_ALIAS` | `hdmi-in` (or whatever `-alias` you used) |
 | `ANDROID_KEY_PASSWORD` | The key password from `keytool` |
 
-Until all four exist, the Release APK workflow still succeeds. It builds an unsigned release APK, prints that signing was skipped, and does **not** upload `hdmi-in-release`. After the secrets are saved, the next run on `main` uploads the signed APK as the `hdmi-in-release` artifact.
+Until all four exist, the Release APK workflow still succeeds. It builds an unsigned release APK, prints that signing was skipped, and does **not** upload `dvd-player-release`. After the secrets are saved, the next run on `main` uploads the signed APK as the `dvd-player-release` artifact.
 
 A local signed build uses the file path, not the base64 secret:
 
@@ -122,13 +122,13 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/hdmi-in-1.0.0-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.0-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
-- Pull requests and `main` pushes upload `hdmi-in-release` only when the four secrets are set.
+- Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
 - A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.1` with `hdmiVersionName = "1.0.0"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
@@ -136,7 +136,7 @@ The signed file is `app/build/outputs/apk/release/hdmi-in-1.0.0-release.apk` (th
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.1`, `1.1.0`, …). Leave `applicationId` as `com.captureboard.hdmiin`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.1`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
@@ -145,8 +145,8 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-4. Download `hdmi-in-1.0.1-release.apk` from the Actions artifact `hdmi-in-release`, or from the GitHub Release attached to that tag.
-5. Upload that APK in Smart MDM as an update to the existing HDMI In app. Do not create a second app entry with a different package name, and do not switch keystores.
+4. Download `dvd-player-1.0.1-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
 
@@ -156,14 +156,14 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r app-debug.apk
+adb install -r dvd-player-1.0.0-debug.apk
 ```
 
 `adb install -r -g` also grants the runtime permissions, which helps when the settings UI is awkward.
 
 **USB stick or the board's file manager:** copy the APK on, open it, and allow installs from that source (Settings → Security → install unknown apps, wording varies by vendor).
 
-Then open **HDMI In** from the launcher. On Android TV-style launchers it is registered as a leanback app as well.
+Then open **DVD Player** from the launcher. On Android TV-style launchers it is registered as a leanback app as well.
 
 Plug the capture card into a USB host port, not a "device" or charge-only port. Hubs are a frequent cause of a card that never enumerates.
 

@@ -1,4 +1,4 @@
-package com.captureboard.hdmiin
+package com.hcc.dvdplayer
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -18,13 +18,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.captureboard.hdmiin.audio.AudioLoopback
-import com.captureboard.hdmiin.databinding.ActivityPlayerBinding
-import com.captureboard.hdmiin.logic.AudioFormatPlanner
-import com.captureboard.hdmiin.preview.Camera2PreviewSession
-import com.captureboard.hdmiin.preview.UvcPreviewSession
-import com.captureboard.hdmiin.source.SourceCatalog
-import com.captureboard.hdmiin.source.UsbEvents
+import com.hcc.dvdplayer.audio.AudioLoopback
+import com.hcc.dvdplayer.databinding.ActivityPlayerBinding
+import com.hcc.dvdplayer.logic.AudioFormatPlanner
+import com.hcc.dvdplayer.preview.Camera2PreviewSession
+import com.hcc.dvdplayer.preview.UvcPreviewSession
+import com.hcc.dvdplayer.source.SourceCatalog
+import com.hcc.dvdplayer.source.UsbEvents
 
 class PlayerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPlayerBinding
