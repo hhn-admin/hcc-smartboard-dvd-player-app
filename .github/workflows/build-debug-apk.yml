@@ -18,7 +18,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      # v3 still asks sdkmanager for the removed "tools" package and fails
+      # before Gradle starts. v4 installs platform-tools only.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install compile SDK
         run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0"
