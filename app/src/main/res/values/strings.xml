@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HDMI In</string>
+    <string name="picker_title">HDMI In</string>
+    <string name="picker_subtitle">Tap a video source. Sound from the capture card plays through this device.</string>
+    <string name="picker_subtitle_one">One source found. Tap it to fill the screen.</string>
+    <string name="empty_sources">Plug a USB HDMI capture card into this device. Connect the DVD player, or any other HDMI source, to the card.</string>
+    <string name="empty_no_usb_host">This device does not report USB host support, so a capture card cannot be opened.</string>
+    <string name="permission_note">Camera and microphone access are only for the capture card. Android calls the USB audio input a microphone.</string>
+    <string name="allow_access">Allow camera and microphone</string>
+    <string name="open_settings">Open app settings</string>
+    <string name="camera_permission_required">Camera permission is required for this source.</string>
+    <string name="device_unplugged">The capture device was unplugged.</string>
+    <string name="usb_permission_denied">USB access was denied. The capture card cannot be opened without it.</string>
+    <string name="open_failed">Could not open that video source.</string>
+    <string name="opening_usb">Opening the capture card. Allow USB access if Android asks.</string>
+    <string name="opening_camera">Opening the external camera.</string>
+    <string name="back">Back</string>
+    <string name="preview_description">Live video</string>
+    <string name="resolution_fmt">%1$d×%2$d</string>
+    <string name="audio_starting">Starting sound…</string>
+    <string name="audio_playing">Sound on</string>
+    <string name="audio_missing">No USB audio from the capture card. Video only.</string>
+    <string name="audio_permission_denied">Microphone permission is off, so capture-card sound stays muted.</string>
+    <string name="audio_failed">USB audio did not start. Video only. The built-in mic is not used.</string>
+</resources>
