@@ -6,6 +6,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
+import com.hcc.dvdplayer.logic.CaptureSourceFilter
 import com.hcc.dvdplayer.logic.SourceLabels
 import com.hcc.dvdplayer.logic.UsbVideoFilter
 
@@ -16,6 +17,7 @@ data class ListedSource(
     val usbDeviceName: String?,
     val cameraId: String?,
     val audioHint: String?,
+    val captureCard: Boolean = false,
 ) {
     enum class Kind { USB_UVC, CAMERA2_EXTERNAL }
 
@@ -33,8 +35,8 @@ class SourceCatalog(context: Context) {
 
     fun list(): List<ListedSource> {
         val usb = usbSources()
-        val cameras = cameraSources()
-        return usb + cameras
+        if (usb.isNotEmpty()) return usb
+        return cameraSources()
     }
 
     fun findUsbDevice(deviceName: String): UsbDevice? {
@@ -44,19 +46,31 @@ class SourceCatalog(context: Context) {
 
     private fun usbSources(): List<ListedSource> {
         val manager = usbManager ?: return emptyList()
-        return manager.deviceList.values
-            .filter { device -> UsbVideoFilter.matches(device.deviceClass, device.deviceSubclass, interfacesOf(device)) }
-            .sortedWith(compareBy({ it.vendorId }, { it.productId }, { it.deviceName }))
-            .map { device ->
-                val product = safeString { device.productName }
-                val manufacturer = safeString { device.manufacturerName }
+        val rows = manager.deviceList.values.mapNotNull { device ->
+            if (!UsbVideoFilter.matches(device.deviceClass, device.deviceSubclass, interfacesOf(device))) {
+                return@mapNotNull null
+            }
+            UsbRow(
+                device = device,
+                product = safeString { device.productName },
+                manufacturer = safeString { device.manufacturerName },
+            )
+        }
+        return CaptureSourceFilter.selectUsbVideo(
+            devices = rows,
+            vendorId = { it.device.vendorId },
+            productName = { it.product },
+            manufacturerName = { it.manufacturer },
+        ).sortedWith(compareBy({ it.device.vendorId }, { it.device.productId }, { it.device.deviceName }))
+            .map { row ->
                 ListedSource(
                     kind = ListedSource.Kind.USB_UVC,
-                    title = SourceLabels.usbTitle(product, manufacturer),
-                    subtitle = SourceLabels.usbSubtitle(device.vendorId, device.productId),
-                    usbDeviceName = device.deviceName,
+                    title = SourceLabels.usbTitle(row.product, row.manufacturer),
+                    subtitle = SourceLabels.usbSubtitle(row.device.vendorId, row.device.productId),
+                    usbDeviceName = row.device.deviceName,
                     cameraId = null,
-                    audioHint = product ?: manufacturer,
+                    audioHint = row.product ?: row.manufacturer,
+                    captureCard = CaptureSourceFilter.looksLikeCaptureCard(row.product, row.manufacturer),
                 )
             }
     }
@@ -75,6 +89,8 @@ class SourceCatalog(context: Context) {
                 return@mapNotNull null
             }
             if (!isExternal(characteristics)) return@mapNotNull null
+            val labels = listOf(id)
+            if (!CaptureSourceFilter.allowCamera2(labels, listedUsbCount = 0)) return@mapNotNull null
             ListedSource(
                 kind = ListedSource.Kind.CAMERA2_EXTERNAL,
                 title = SourceLabels.cameraTitle(id),
@@ -82,6 +98,7 @@ class SourceCatalog(context: Context) {
                 usbDeviceName = null,
                 cameraId = id,
                 audioHint = null,
+                captureCard = true,
             )
         }.sortedBy { it.cameraId }
     }
@@ -102,6 +119,12 @@ class SourceCatalog(context: Context) {
         }
         return snapshots
     }
+
+    private data class UsbRow(
+        val device: UsbDevice,
+        val product: String?,
+        val manufacturer: String?,
+    )
 
     private fun safeString(read: () -> String?): String? {
         return try {

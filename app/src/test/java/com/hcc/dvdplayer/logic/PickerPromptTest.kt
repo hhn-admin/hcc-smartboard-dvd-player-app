@@ -9,16 +9,17 @@ import org.junit.Test
 
 class PickerPromptTest {
     @Test
-    fun pointsAtTheOnlyUsbSourceEvenWhenACameraIsListed() {
-        val usb = usb("usb-1")
-        val camera = camera("0")
-        assertEquals(usb, PickerPrompt.pointedSource(listOf(usb, camera)))
+    fun pointsAtTheOnlyCaptureCard() {
+        val usb = usb("usb-1", captureCard = true)
+        val ambiguous = usb("usb-2", captureCard = false)
+        assertEquals(usb, PickerPrompt.pointedSource(listOf(usb, ambiguous)))
     }
 
     @Test
-    fun pointsAtTheOnlySourceWhenItIsNotUsb() {
-        val camera = camera("0")
-        assertEquals(camera, PickerPrompt.pointedSource(listOf(camera)))
+    fun pointsAtOneAmbiguousUsbSourceWithoutTreatingItAsACaptureCard() {
+        val ambiguous = usb("usb-1", captureCard = false)
+        assertEquals(ambiguous, PickerPrompt.pointedSource(listOf(ambiguous)))
+        assertNull(PickerPrompt.pointedSource(listOf(camera("0"))))
     }
 
     @Test
@@ -27,16 +28,33 @@ class PickerPromptTest {
     }
 
     @Test
-    fun autoStartsOnlyASingleGrantedSource() {
-        assertTrue(PickerPrompt.shouldAutoStart(1, permissionsGranted = true, returnedFromPlayer = false, openInProgress = false))
-        assertFalse(PickerPrompt.shouldAutoStart(0, true, false, false))
-        assertFalse(PickerPrompt.shouldAutoStart(2, true, false, false))
-        assertFalse(PickerPrompt.shouldAutoStart(1, false, false, false))
-        assertFalse(PickerPrompt.shouldAutoStart(1, true, true, false))
-        assertFalse(PickerPrompt.shouldAutoStart(1, true, false, true))
+    fun autoStartsOnlyASingleIdentifiedCaptureCard() {
+        val capture = listOf(usb("card", captureCard = true))
+        assertTrue(PickerPrompt.shouldAutoStart(capture, permissionsGranted = true, returnedFromPlayer = false, openInProgress = false))
+        assertFalse(PickerPrompt.shouldAutoStart(emptyList(), true, false, false))
+        assertFalse(PickerPrompt.shouldAutoStart(listOf(usb("a", true), usb("b", true)), true, false, false))
+        assertFalse(PickerPrompt.shouldAutoStart(capture, false, false, false))
+        assertFalse(PickerPrompt.shouldAutoStart(capture, true, true, false))
+        assertFalse(PickerPrompt.shouldAutoStart(capture, true, false, true))
+        assertFalse(
+            PickerPrompt.shouldAutoStart(
+                listOf(usb("maybe", captureCard = false)),
+                permissionsGranted = true,
+                returnedFromPlayer = false,
+                openInProgress = false,
+            ),
+        )
+        assertFalse(
+            PickerPrompt.shouldAutoStart(
+                listOf(camera("0")),
+                permissionsGranted = true,
+                returnedFromPlayer = false,
+                openInProgress = false,
+            ),
+        )
     }
 
-    private fun usb(name: String): ListedSource {
+    private fun usb(name: String, captureCard: Boolean = false): ListedSource {
         return ListedSource(
             kind = ListedSource.Kind.USB_UVC,
             title = "DVD capture card",
@@ -44,6 +62,7 @@ class PickerPromptTest {
             usbDeviceName = name,
             cameraId = null,
             audioHint = null,
+            captureCard = captureCard,
         )
     }
 
@@ -55,6 +74,7 @@ class PickerPromptTest {
             usbDeviceName = null,
             cameraId = id,
             audioHint = null,
+            captureCard = false,
         )
     }
 }

@@ -3,25 +3,26 @@ package com.hcc.dvdplayer.logic
 import com.hcc.dvdplayer.source.ListedSource
 
 /**
- * Which row to point at, and when a single source should start on its own.
- * Playback stays put after Back until the list is no longer a single source.
+ * Which row to point at, and when a single capture card should start on its own.
+ * The SMART webcam is not a source. Back from playback stays on the list until
+ * the capture card disappears.
  */
 object PickerPrompt {
     fun pointedSource(sources: List<ListedSource>): ListedSource? {
+        val captures = sources.filter { it.captureCard }
+        if (captures.size == 1) return captures.first()
+        if (captures.isNotEmpty()) return null
         val usb = sources.filter { it.kind == ListedSource.Kind.USB_UVC }
-        return when {
-            usb.size == 1 -> usb.first()
-            sources.size == 1 -> sources.first()
-            else -> null
-        }
+        return if (usb.size == 1) usb.first() else null
     }
 
     fun shouldAutoStart(
-        sourceCount: Int,
+        sources: List<ListedSource>,
         permissionsGranted: Boolean,
         returnedFromPlayer: Boolean,
         openInProgress: Boolean,
     ): Boolean {
-        return sourceCount == 1 && permissionsGranted && !returnedFromPlayer && !openInProgress
+        if (sources.size != 1 || !sources.first().captureCard) return false
+        return permissionsGranted && !returnedFromPlayer && !openInProgress
     }
 }

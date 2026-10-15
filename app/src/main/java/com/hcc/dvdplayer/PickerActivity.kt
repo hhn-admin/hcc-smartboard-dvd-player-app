@@ -139,7 +139,7 @@ class PickerActivity : AppCompatActivity() {
             binding.stepTap.isActivated = !empty
             renderPermission()
             if (PickerPrompt.shouldAutoStart(
-                    sourceCount = sources.size,
+                    sources = sources,
                     permissionsGranted = missingPermissions().isEmpty(),
                     returnedFromPlayer = returnedFromPlayer,
                     openInProgress = openInProgress,
@@ -213,8 +213,8 @@ class PickerActivity : AppCompatActivity() {
                 },
             )
         } else if (missing.isNotEmpty()) {
-            val sources = catalog.list()
-            if (sources.size == 1) pending = sources.first()
+            val only = catalog.list().singleOrNull()
+            if (only?.captureCard == true) pending = only
             permissionRequest.launch(missing)
         }
     }
