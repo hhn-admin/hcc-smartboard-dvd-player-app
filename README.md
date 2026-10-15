@@ -9,17 +9,16 @@ The app does not use Google Play services. It is meant to be sideloaded.
 1. Open **DVD Player**.
 2. Plug in the DVD capture card. Until it is detected, the screen shows that sentence, a large plug icon, and an arrow.
 3. Allow camera and microphone access. Android labels the card's USB audio as a microphone. That permission is not used for the built-in mic.
-4. When only one source is connected, playback starts on its own after permission is granted (and when the card is plugged in later, if permission was already granted). If more than one source is listed, tap the USB source. An arrow points at that row when there is a single USB source.
+4. When the DVD capture card is the only listed source, playback starts on its own after permission is granted. The board's own camera is not a source. If more than one capture card is listed, tap the USB source. An arrow points at that row when there is a single one.
 5. If Android asks for USB permission, allow it. The picture goes full screen and the screen stays on. Back (or the on-screen Back button, which appears when you tap the picture) returns to the list and stays there. Unplugging the card that is playing also returns to the list.
 
 ## How video is opened
 
-Two paths, picked from the same list:
+SMART boards always have a SMART Ultra HD Camera 120 (model SWC-120UHD) on USB. That webcam is not a DVD source. Any USB device whose vendor id is `0x0B8C` (SMART Technologies, from SMART's support docs; the product id varies) is dropped from the list. Names containing "SMART", "Smart Technologies", "Ultra HD Camera", "SWC-120", "webcam", or "Integrated" are dropped too, including a Camera2 camera that shows up under one of those names. Built-in cameras are not listed.
 
-- **System camera** — Camera2 devices whose lens facing is external (or, on Android 9+, whose hardware level is external). Use this when the board already exposes the dongle. The camera HAL owns the USB video interface, which leaves the USB audio driver alone and usually has less overhead.
-- **USB capture** — for the common case where the board has no external-camera HAL and Camera2 never lists the dongle. This path uses [UVCAndroid](https://github.com/shiyinghan/UVCAndroid) `1.0.13` (`com.herohan:UVCAndroid` on Maven Central). It is a maintained libusb/libuvc stack (the line of saki4510t/UVCCamera and AndroidUSBCamera) that opens the UVC interface through the Android USB host API. No root. The preview request prefers MJPEG at or below 1080p, because uncompressed 1080p does not fit on a USB 2.0 host, and sets libuvc's bandwidth quirk that cheap HDMI sticks need in order to negotiate.
+What remains is a USB video device. A name that looks like a capture dongle (for example "capture", "HDMI", "UVC", "Mack", "Elgato", "ezcap", "AVG", "MS210x", or "MS213x") is treated as the DVD capture card and can start on its own when it is the only row. If a USB video device is present but the name is ambiguous, it is still listed and the SMART webcam stays hidden, but playback does not start until someone taps it. Camera2 is used only when no USB source was kept and the camera's own name looks like a capture card. Until then the screen keeps saying "Plug in the DVD capture card".
 
-Both entries can appear for one physical card. If the system camera stays black, use the USB capture row.
+The USB path uses [UVCAndroid](https://github.com/shiyinghan/UVCAndroid) `1.0.13` (`com.herohan:UVCAndroid` on Maven Central). It is a maintained libusb/libuvc stack (the line of saki4510t/UVCCamera and AndroidUSBCamera) that opens the UVC interface through the Android USB host API. No root. The preview request prefers MJPEG at or below 1080p, because uncompressed 1080p does not fit on a USB 2.0 host, and sets libuvc's bandwidth quirk that cheap HDMI sticks need in order to negotiate.
 
 ## How sound is played
 
@@ -27,7 +26,9 @@ The capture card's video and audio are separate USB functions (UVC and UAC). The
 
 When preview starts it looks for an input of type USB device, USB headset, or USB accessory, records PCM from that device, and writes it to an `AudioTrack` with `USAGE_MEDIA` and `CONTENT_TYPE_MOVIE`. From Android 10 up the track sets `ALLOW_CAPTURE_BY_ALL`, so screen share and cast apps that capture media playback can hear it. Nothing forces the track onto the USB gadget; media usage follows the board's current route (room speakers or the board's HDMI out).
 
-A short hold (80 ms on the UVC path, 40 ms on Camera2) keeps the sound from racing ahead of the picture. The track itself uses a small buffer and, on Android 8+, low-latency mode. If the routed input is the built-in microphone, playback stops instead of howling into the room.
+USB vendor `0x0B8C` is never that input. The SMART camera's mic, and the board's mic array on the same vendor id, are excluded by vendor id, by the webcam names above, and by a USB address that points at that device. While that vendor is connected, an unnamed USB input is not used either, so the loopback cannot fall through to the board microphone. The built-in mic is refused for the same reason: looping it into the room speakers howls.
+
+A short hold (80 ms on the UVC path, 40 ms on Camera2) keeps the sound from racing ahead of the picture. The track itself uses a small buffer and, on Android 8+, low-latency mode.
 
 ## Build
 
@@ -38,7 +39,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.1-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.2-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -121,30 +122,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.0.1-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.2-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.2` with `hdmiVersionName = "1.0.1"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.3` with `hdmiVersionName = "1.0.2"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.2`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.3`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
-4. Download `dvd-player-1.0.2-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.0.3-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -155,7 +156,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.0.1-debug.apk
+adb install -r dvd-player-1.0.2-debug.apk
 ```
 
 `adb install -r -g` also grants the runtime permissions, which helps when the settings UI is awkward.

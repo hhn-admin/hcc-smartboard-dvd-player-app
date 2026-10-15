@@ -3,6 +3,7 @@ package com.hcc.dvdplayer.audio
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -19,6 +20,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
+import com.hcc.dvdplayer.logic.CaptureSourceFilter
 import com.hcc.dvdplayer.logic.PcmDelayLine
 
 /**
@@ -29,7 +31,8 @@ import com.hcc.dvdplayer.logic.PcmDelayLine
  * be sent back into the dongle.
  *
  * The built-in microphone is refused. Looping that into the room speakers is a
- * feedback howl, and it is not the capture card.
+ * feedback howl, and it is not the capture card. USB vendor 0x0B8C (the SMART
+ * Ultra HD Camera and its mic array) is refused as well.
  */
 class AudioLoopback(
     context: Context,
@@ -136,7 +139,7 @@ class AudioLoopback(
     }
 
     private fun openAndPump(inputs: List<AudioDeviceInfo>): Boolean {
-        val ordered = orderInputs(inputs)
+        val ordered = inputs
         val outputRate = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
         for (device in ordered) {
             val rates = AudioFormatPlanner.rateAttempts(device.sampleRates, outputRate)
@@ -257,8 +260,8 @@ class AudioLoopback(
             return false
         }
         val routed = audioRecord.routedDevice
-        if (routed != null && !isUsbInput(routed.type)) {
-            Log.w(TAG, "Refusing non-USB route type=${routed.type} (${routed.productName})")
+        if (routed != null && !isAllowedCaptureRoute(routed)) {
+            Log.w(TAG, "Refusing route type=${routed.type} (${routed.productName})")
             return false
         }
         val line = PcmDelayLine(plan.delayBytes)
@@ -271,8 +274,8 @@ class AudioLoopback(
             if (read > 0) line.write(tmp, 0, read)
         }
         val routedAfter = audioRecord.routedDevice
-        if (routedAfter != null && !isUsbInput(routedAfter.type)) {
-            Log.w(TAG, "Route drifted off USB type=${routedAfter.type}")
+        if (routedAfter != null && !isAllowedCaptureRoute(routedAfter)) {
+            Log.w(TAG, "Route drifted off the capture card type=${routedAfter.type} (${routedAfter.productName})")
             return false
         }
         try {
@@ -312,17 +315,49 @@ class AudioLoopback(
         }
     }
 
-    private fun usbInputs(): List<AudioDeviceInfo> {
-        return audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter { isUsbInput(it.type) }
+    private fun isAllowedCaptureRoute(info: AudioDeviceInfo): Boolean {
+        if (!isUsbInput(info.type)) return false
+        val identity = CaptureSourceFilter.AudioInputIdentity(
+            productName = info.productName?.toString(),
+            address = audioAddress(info),
+        )
+        return !CaptureSourceFilter.isBlockedAudio(identity, connectedUsbDevices(), productHint)
     }
 
-    private fun orderInputs(inputs: List<AudioDeviceInfo>): List<AudioDeviceInfo> {
-        val hint = productHint?.trim().orEmpty()
-        if (hint.isEmpty()) return inputs
-        val matched = inputs.filter { info ->
-            info.productName?.toString()?.contains(hint, ignoreCase = true) == true
+    private fun usbInputs(): List<AudioDeviceInfo> {
+        val raw = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter { isUsbInput(it.type) }
+        val identities = raw.map { info ->
+            CaptureSourceFilter.AudioInputIdentity(
+                productName = info.productName?.toString(),
+                address = audioAddress(info),
+            )
         }
-        return if (matched.isEmpty()) inputs else matched + (inputs - matched.toSet())
+        return CaptureSourceFilter.selectAudioInputIndexes(identities, productHint, connectedUsbDevices())
+            .map { index -> raw[index] }
+    }
+
+    private fun connectedUsbDevices(): List<CaptureSourceFilter.UsbIdentity> {
+        val manager = appContext.getSystemService(UsbManager::class.java) ?: return emptyList()
+        return manager.deviceList.values.map { device ->
+            CaptureSourceFilter.UsbIdentity(
+                vendorId = device.vendorId,
+                deviceName = device.deviceName,
+                productName = quietName { device.productName },
+                manufacturerName = quietName { device.manufacturerName },
+            )
+        }
+    }
+
+    private fun audioAddress(info: AudioDeviceInfo): String? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.address else null
+    }
+
+    private fun quietName(read: () -> String?): String? {
+        return try {
+            read()?.takeIf { it.isNotBlank() }
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
     private fun mediaAttributes(): AudioAttributes {
