@@ -11,7 +11,10 @@ import android.view.animation.AnimationUtils
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import kotlin.math.max
 import com.hcc.dvdplayer.databinding.ActivityPickerBinding
 import com.hcc.dvdplayer.logic.PickerPrompt
 import com.hcc.dvdplayer.source.ListedSource
@@ -83,6 +86,7 @@ class PickerActivity : AppCompatActivity() {
         binding.sources.layoutManager = LinearLayoutManager(this)
         binding.sources.adapter = adapter
         binding.permissionButton.setOnClickListener { requestAccess() }
+        keepEmptyPromptAboveSystemBars()
         UsbEvents.register(this, usbReceiver)
     }
 
@@ -102,6 +106,26 @@ class PickerActivity : AppCompatActivity() {
     override fun onDestroy() {
         unregisterReceiver(usbReceiver)
         super.onDestroy()
+    }
+
+    /**
+     * The prompt sits in the bottom-left corner, aimed at the bezel ports.
+     * The navigation or task bar is also along the bottom, so the block keeps
+     * a gap under the arrow and grows that gap when the bars overlay the window.
+     */
+    private fun keepEmptyPromptAboveSystemBars() {
+        val gap = (24 * resources.displayMetrics.density).toInt()
+        ViewCompat.setOnApplyWindowInsetsListener(binding.emptyState) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            val bottom = max(gap, bars.bottom + gap / 2)
+            if (view.paddingBottom != bottom) {
+                view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, bottom)
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.emptyState)
     }
 
     private fun refresh() {

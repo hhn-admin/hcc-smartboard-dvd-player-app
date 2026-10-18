@@ -7,7 +7,7 @@ The app does not use Google Play services. It is meant to be sideloaded.
 ## What you do
 
 1. Open **DVD Player**.
-2. Plug in the DVD capture card. Until it is detected, the screen shows that sentence, a large plug icon, and an arrow.
+2. Plug in the DVD capture card. Until it is detected, that sentence, a large plug icon, and an arrow sit at the bottom-left of the screen. The arrow points down-left, toward the USB ports on the front bezel.
 3. Allow camera and microphone access. Android labels the card's USB audio as a microphone. That permission is not used for the built-in mic.
 4. When the DVD capture card is the only listed source, playback starts on its own after permission is granted. The board's own camera is not a source. If more than one capture card is listed, tap the USB source. An arrow points at that row when there is a single one.
 5. If Android asks for USB permission, allow it. The picture goes full screen and the screen stays on. Back (or the on-screen Back button, which appears when you tap the picture) returns to the list and stays there. Unplugging the card that is playing also returns to the list.
@@ -43,7 +43,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.4-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.5-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -126,30 +126,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.0.4-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.5-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.5` with `hdmiVersionName = "1.0.4"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.6` with `hdmiVersionName = "1.0.5"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.5`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.6`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.0.5
-git push origin v1.0.5
+git tag v1.0.6
+git push origin v1.0.6
 ```
 
-4. Download `dvd-player-1.0.5-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.0.6-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -160,7 +160,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.0.4-debug.apk
+adb install -r dvd-player-1.0.5-debug.apk
 ```
 
 `adb install -r -g` also grants the runtime permissions, which helps when the settings UI is awkward.
