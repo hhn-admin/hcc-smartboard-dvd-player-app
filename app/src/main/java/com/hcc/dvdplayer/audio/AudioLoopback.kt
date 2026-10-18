@@ -19,9 +19,11 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import android.hardware.usb.UsbConstants
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
 import com.hcc.dvdplayer.logic.PcmDelayLine
+import com.hcc.dvdplayer.logic.UacPlayback
 
 /**
  * Reads the capture card's USB audio interface and writes it to an [AudioTrack]
@@ -37,6 +39,7 @@ import com.hcc.dvdplayer.logic.PcmDelayLine
 class AudioLoopback(
     context: Context,
     private val productHint: String?,
+    private val usbDeviceName: String?,
     private val syncDelayMs: Int,
     private val listener: (Status) -> Unit,
 ) {
@@ -60,6 +63,10 @@ class AudioLoopback(
     private var deviceCallback: AudioDeviceCallback? = null
     private var focusRequest: android.media.AudioFocusRequest? = null
     private var status = Status.STOPPED
+    private var quietPolls = 0
+    @Volatile private var directUsbNote: String = "not started"
+
+    fun directUsbNote(): String = directUsbNote
 
     fun start() {
         if (running) return
@@ -97,7 +104,7 @@ class AudioLoopback(
             track?.pause()
         } catch (_: Exception) {
         }
-        thread?.join(1_500)
+        thread?.join(2_500)
         thread = null
         releaseStream()
         deviceCallback?.let { callback ->
@@ -115,10 +122,36 @@ class AudioLoopback(
         while (running) {
             val inputs = usbInputs()
             if (inputs.isEmpty()) {
+                quietPolls += 1
+                if (quietPolls == 1) {
+                    directUsbNote = "waiting for a USB input"
+                    publish(Status.STARTING)
+                    waitForUsbInput()
+                    continue
+                }
+                val pumped = try {
+                    directUsbNote = "opening the capture card's USB audio"
+                    tryDirectUsb()
+                } catch (error: Exception) {
+                    Log.e(TAG, "direct usb audio", error)
+                    directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
+                    false
+                }
+                releaseStream()
+                if (!running) break
+                if (pumped) {
+                    quietPolls = 0
+                    continue
+                }
+                if (directUsbNote.startsWith("opening")) {
+                    directUsbNote = "no USB input, and direct USB audio did not start"
+                }
                 publish(Status.NO_USB_INPUT)
                 waitForUsbInput()
                 continue
             }
+            quietPolls = 0
+            directUsbNote = "using Android USB input"
             val pumped = try {
                 openAndPump(inputs)
             } catch (error: SecurityException) {
@@ -131,37 +164,101 @@ class AudioLoopback(
             }
             releaseStream()
             if (!running) break
-            if (!pumped) {
-                publish(Status.FAILED)
-                pauseBriefly()
+            if (pumped) continue
+            val direct = try {
+                tryDirectUsb()
+            } catch (error: Exception) {
+                Log.e(TAG, "direct usb audio", error)
+                directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
+                false
             }
+            releaseStream()
+            if (!running) break
+            if (direct) continue
+            publish(Status.FAILED)
+            pauseBriefly()
+        }
+    }
+
+    private fun tryDirectUsb(): Boolean {
+        val target = CaptureSourceFilter.directUsbDeviceName(usbDeviceName, connectedUsbDevices())
+        if (target == null) {
+            directUsbNote = "no capture-card audio interface to open"
+            Log.w(TAG, directUsbNote)
+            return false
+        }
+        val capture = UsbUacCapture(appContext, target)
+        val session = capture.open()
+        if (session == null) {
+            directUsbNote = "direct USB audio did not open"
+            return false
+        }
+        directUsbNote = "direct ${session.summary}"
+        try {
+            val plan = AudioFormatPlanner.plan(
+                reportedRates = intArrayOf(session.sampleRate),
+                reportedChannels = intArrayOf(session.channelCount),
+                outputPreferredRate = session.sampleRate,
+                delayMs = syncDelayMs,
+            )
+            val outMask = if (plan.channelCount == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
+            val minTrack = AudioTrack.getMinBufferSize(plan.sampleRate, outMask, AudioFormat.ENCODING_PCM_16BIT)
+            if (minTrack <= 0) return false
+            val attributes = mediaAttributes()
+            val playFormat = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(plan.sampleRate)
+                .setChannelMask(outMask)
+                .build()
+            val audioTrack = buildTrack(attributes, playFormat, maxOf(minTrack, plan.frameBytes * plan.sampleRate / 50), lowLatency = true)
+                ?: buildTrack(attributes, playFormat, minTrack, lowLatency = false)
+                ?: return false
+            track = audioTrack
+            requestFocus(attributes)
+            Log.i(TAG, "Direct USB audio ${session.summary} delay=${syncDelayMs}ms")
+            return pumpFrom(session::read, audioTrack, plan)
+        } finally {
+            session.close()
         }
     }
 
     private fun openAndPump(inputs: List<AudioDeviceInfo>): Boolean {
-        val ordered = inputs
         val outputRate = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
-        for (device in ordered) {
+        for (device in inputs) {
+            if (UacPlayback.halReportsMono96k(device.sampleRates, device.channelCounts)) {
+                Log.i(TAG, "USB audio ${device.productName} reports 96 kHz mono; playing it as 48 kHz stereo")
+                for (source in RECORD_SOURCES) {
+                    val opened = openStream(device, source, 96_000, 1, 48_000, 2) ?: continue
+                    if (playOpened(device, opened, source)) return true
+                }
+                continue
+            }
             val rates = AudioFormatPlanner.rateAttempts(device.sampleRates, outputRate)
             val channels = AudioFormatPlanner.channelAttempts(device.channelCounts)
             for (rate in rates) {
                 for (channelCount in channels) {
                     for (source in RECORD_SOURCES) {
                         val opened = openStream(device, source, rate, channelCount) ?: continue
-                        Log.i(
-                            TAG,
-                            "USB audio ${device.productName} ${opened.plan.sampleRate}Hz " +
-                                "ch=${opened.plan.channelCount} source=$source delay=${syncDelayMs}ms",
-                        )
-                        requestFocus(opened.attributes)
-                        val ok = pump(opened.record, opened.track, opened.plan)
-                        if (!running) return true
-                        if (ok) return true
-                        releaseStream()
+                        if (playOpened(device, opened, source)) return true
                     }
                 }
             }
         }
+        return false
+    }
+
+    private fun playOpened(device: AudioDeviceInfo, opened: Opened, source: Int): Boolean {
+        Log.i(
+            TAG,
+            "USB audio ${device.productName} ${opened.plan.sampleRate}Hz " +
+                "ch=${opened.plan.channelCount} source=$source delay=${syncDelayMs}ms",
+        )
+        directUsbNote = "Android USB input ${opened.plan.sampleRate} Hz x ${opened.plan.channelCount}"
+        requestFocus(opened.attributes)
+        val ok = pump(opened.record, opened.track, opened.plan)
+        if (!running) return true
+        if (ok) return true
+        releaseStream()
         return false
     }
 
@@ -170,19 +267,22 @@ class AudioLoopback(
         source: Int,
         sampleRate: Int,
         channelCount: Int,
+        playRate: Int = sampleRate,
+        playChannels: Int = channelCount,
     ): Opened? {
         val plan = AudioFormatPlanner.plan(
-            reportedRates = intArrayOf(sampleRate),
-            reportedChannels = intArrayOf(channelCount),
-            outputPreferredRate = sampleRate,
+            reportedRates = intArrayOf(playRate),
+            reportedChannels = intArrayOf(playChannels),
+            outputPreferredRate = playRate,
             delayMs = syncDelayMs,
         )
         val inMask = if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
-        val outMask = if (channelCount == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
+        val outMask = if (playChannels == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
         val minRecord = AudioRecord.getMinBufferSize(sampleRate, inMask, AudioFormat.ENCODING_PCM_16BIT)
-        val minTrack = AudioTrack.getMinBufferSize(sampleRate, outMask, AudioFormat.ENCODING_PCM_16BIT)
+        val minTrack = AudioTrack.getMinBufferSize(playRate, outMask, AudioFormat.ENCODING_PCM_16BIT)
         if (minRecord <= 0 || minTrack <= 0) return null
-        val recordBuffer = maxOf(minRecord, plan.frameBytes * sampleRate / 50) * 2
+        val recordFrame = channelCount * 2
+        val recordBuffer = maxOf(minRecord, recordFrame * sampleRate / 50) * 2
         val recordFormat = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setSampleRate(sampleRate)
@@ -209,10 +309,10 @@ class AudioLoopback(
         val attributes = mediaAttributes()
         val playFormat = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(sampleRate)
+            .setSampleRate(playRate)
             .setChannelMask(outMask)
             .build()
-        val preferredBuffer = maxOf(minTrack, plan.frameBytes * sampleRate / 50)
+        val preferredBuffer = maxOf(minTrack, plan.frameBytes * playRate / 50)
         val audioTrack = buildTrack(attributes, playFormat, preferredBuffer, lowLatency = true)
             ?: buildTrack(attributes, playFormat, minTrack, lowLatency = false)
         if (audioTrack == null) {
@@ -264,20 +364,38 @@ class AudioLoopback(
             Log.w(TAG, "Refusing route type=${routed.type} (${routed.productName})")
             return false
         }
+        return pumpFrom(
+            read = { buffer -> audioRecord.read(buffer, 0, buffer.size) },
+            audioTrack = audioTrack,
+            plan = plan,
+            afterPreroll = {
+                val routedAfter = audioRecord.routedDevice
+                if (routedAfter != null && !isAllowedCaptureRoute(routedAfter)) {
+                    Log.w(TAG, "Route drifted off the capture card type=${routedAfter.type} (${routedAfter.productName})")
+                    false
+                } else {
+                    true
+                }
+            },
+        )
+    }
+
+    private fun pumpFrom(
+        read: (ByteArray) -> Int,
+        audioTrack: AudioTrack,
+        plan: AudioFormatPlanner.Plan,
+        afterPreroll: () -> Boolean = { true },
+    ): Boolean {
         val line = PcmDelayLine(plan.delayBytes)
         val chunk = (plan.sampleRate / 100) * plan.frameBytes
         val tmp = ByteArray(chunk.coerceAtLeast(plan.frameBytes))
         val prerollDeadline = SystemClock.elapsedRealtime() + 800
         while (running && !line.primed() && SystemClock.elapsedRealtime() < prerollDeadline) {
-            val read = audioRecord.read(tmp, 0, tmp.size)
-            if (read < 0) return false
-            if (read > 0) line.write(tmp, 0, read)
+            val got = read(tmp)
+            if (got < 0) return false
+            if (got > 0) line.write(tmp, 0, got)
         }
-        val routedAfter = audioRecord.routedDevice
-        if (routedAfter != null && !isAllowedCaptureRoute(routedAfter)) {
-            Log.w(TAG, "Route drifted off the capture card type=${routedAfter.type} (${routedAfter.productName})")
-            return false
-        }
+        if (!afterPreroll()) return false
         try {
             audioTrack.play()
         } catch (error: Exception) {
@@ -286,13 +404,13 @@ class AudioLoopback(
         }
         publish(Status.PLAYING)
         while (running) {
-            val read = audioRecord.read(tmp, 0, tmp.size)
-            if (read < 0) return false
-            if (read == 0) continue
-            line.write(tmp, 0, read)
+            val got = read(tmp)
+            if (got < 0) return false
+            if (got == 0) continue
+            line.write(tmp, 0, got)
             if (line.queued() > plan.delayBytes * 4) line.trimTo(plan.delayBytes)
             if (!line.primed()) continue
-            val out = line.read(read)
+            val out = line.read(got)
             var offset = 0
             while (offset < out.size && running) {
                 val wrote = audioTrack.write(out, offset, out.size - offset)
@@ -321,7 +439,7 @@ class AudioLoopback(
             productName = info.productName?.toString(),
             address = audioAddress(info),
         )
-        return !CaptureSourceFilter.isBlockedAudio(identity, connectedUsbDevices(), productHint)
+        return !CaptureSourceFilter.isBlockedAudio(identity, connectedUsbDevices(), productHint, usbDeviceName)
     }
 
     private fun usbInputs(): List<AudioDeviceInfo> {
@@ -332,7 +450,7 @@ class AudioLoopback(
                 address = audioAddress(info),
             )
         }
-        return CaptureSourceFilter.selectAudioInputIndexes(identities, productHint, connectedUsbDevices())
+        return CaptureSourceFilter.selectAudioInputIndexes(identities, productHint, connectedUsbDevices(), usbDeviceName)
             .map { index -> raw[index] }
     }
 
@@ -344,7 +462,19 @@ class AudioLoopback(
                 deviceName = device.deviceName,
                 productName = quietName { device.productName },
                 manufacturerName = quietName { device.manufacturerName },
+                productId = device.productId,
+                hasAudioInterface = hasAudioInterface(device),
             )
+        }
+    }
+
+    private fun hasAudioInterface(device: android.hardware.usb.UsbDevice): Boolean {
+        return try {
+            (0 until device.interfaceCount).any { index ->
+                device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_AUDIO
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 

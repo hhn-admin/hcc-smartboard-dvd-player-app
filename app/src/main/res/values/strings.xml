@@ -25,4 +25,5 @@
     <string name="audio_missing">No USB audio from the DVD capture card. Video only.</string>
     <string name="audio_permission_denied">Microphone permission is off, so the DVD capture card stays muted.</string>
     <string name="audio_failed">USB audio did not start. Video only. The built-in mic is not used.</string>
+    <string name="audio_diagnostics_close">Close</string>
 </resources>

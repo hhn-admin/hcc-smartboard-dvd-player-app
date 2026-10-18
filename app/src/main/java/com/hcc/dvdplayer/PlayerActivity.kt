@@ -19,6 +19,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.hcc.dvdplayer.audio.AudioLoopback
+import com.hcc.dvdplayer.audio.PlaybackDiagnostics
 import com.hcc.dvdplayer.databinding.ActivityPlayerBinding
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
 import com.hcc.dvdplayer.preview.Camera2PreviewSession
@@ -66,9 +67,26 @@ class PlayerActivity : AppCompatActivity() {
         binding.backButton.setOnClickListener { finishWithNotice(null) }
         binding.playerRoot.setOnClickListener { showChrome() }
         binding.preview.setOnClickListener { showChrome() }
+        binding.status.setOnLongClickListener {
+            toggleDiagnostics()
+            true
+        }
+        binding.preview.setOnLongClickListener {
+            toggleDiagnostics()
+            true
+        }
+        binding.diagnosticsClose.setOnClickListener { hideDiagnostics() }
+        binding.diagnosticsBody.setOnLongClickListener {
+            hideDiagnostics()
+            true
+        }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                finishWithNotice(null)
+                if (binding.diagnostics.visibility == View.VISIBLE) {
+                    hideDiagnostics()
+                } else {
+                    finishWithNotice(null)
+                }
             }
         })
         UsbEvents.register(this, usbReceiver)
@@ -87,7 +105,11 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_ESCAPE || keyCode == KeyEvent.KEYCODE_BUTTON_B) {
-            finishWithNotice(null)
+            if (binding.diagnostics.visibility == View.VISIBLE) {
+                hideDiagnostics()
+            } else {
+                finishWithNotice(null)
+            }
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -205,6 +227,7 @@ class PlayerActivity : AppCompatActivity() {
         val loopback = AudioLoopback(
             context = this,
             productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
+            usbDeviceName = intentUsbName(),
             syncDelayMs = syncDelayMs,
         ) { status ->
             if (leaving) return@AudioLoopback
@@ -248,6 +271,31 @@ class PlayerActivity : AppCompatActivity() {
     private fun scheduleStatusHide() {
         handler.removeCallbacks(hideStatus)
         handler.postDelayed(hideStatus, STATUS_HIDE_MS)
+    }
+
+    private fun toggleDiagnostics() {
+        if (binding.diagnostics.visibility == View.VISIBLE) {
+            hideDiagnostics()
+            return
+        }
+        val text = try {
+            PlaybackDiagnostics(this).render(
+                versionName = BuildConfig.VERSION_NAME,
+                playingDeviceName = intentUsbName(),
+                productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
+                directUsb = audio?.directUsbNote() ?: "not started",
+            )
+        } catch (error: Exception) {
+            "Diagnostics failed: ${error.message ?: error.javaClass.simpleName}"
+        }
+        binding.diagnosticsBody.text = text
+        binding.diagnostics.visibility = View.VISIBLE
+        binding.status.visibility = View.VISIBLE
+        binding.diagnosticsClose.requestFocus()
+    }
+
+    private fun hideDiagnostics() {
+        binding.diagnostics.visibility = View.GONE
     }
 
     private fun showChrome() {

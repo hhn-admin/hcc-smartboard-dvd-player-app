@@ -4,6 +4,8 @@ package com.hcc.dvdplayer.logic
  * SMART boards keep a SMART Ultra HD Camera 120 (SWC-120UHD) plugged in.
  * That webcam is USB vendor 0x0B8C. It must never be listed, auto-started, or
  * used as the audio loopback. HDMI capture dongles are chosen by name.
+ * Their UAC function is often a generic "USB Audio" name on the same device,
+ * which is kept when it is the only capture card with an audio interface.
  */
 object CaptureSourceFilter {
     const val SMART_VENDOR_ID = 0x0B8C
@@ -31,16 +33,31 @@ object CaptureSourceFilter {
         "avg",
     )
 
+    private val GENERIC_UAC_PREFIXES = listOf(
+        "usb audio",
+        "usb pnp sound",
+        "usb headset",
+        "digital audio",
+        "hdmi audio",
+    )
+
     data class UsbIdentity(
         val vendorId: Int,
         val deviceName: String?,
         val productName: String?,
         val manufacturerName: String?,
+        val productId: Int = 0,
+        val hasAudioInterface: Boolean = false,
     )
 
     data class AudioInputIdentity(
         val productName: String?,
         val address: String?,
+    )
+
+    data class AudioChoice(
+        val use: Boolean,
+        val detail: String,
     )
 
     fun isExcludedUsb(vendorId: Int, vararg names: String?): Boolean {
@@ -87,9 +104,10 @@ object CaptureSourceFilter {
         inputs: List<AudioInputIdentity>,
         productHint: String?,
         usbDevices: List<UsbIdentity>,
+        playingDeviceName: String? = null,
     ): List<Int> {
         val allowed = inputs.indices.filter { index ->
-            !isBlockedAudio(inputs[index], usbDevices, productHint)
+            chooseAudio(inputs[index], usbDevices, productHint, playingDeviceName).use
         }
         val hint = productHint?.trim().orEmpty()
         if (hint.isEmpty()) return allowed
@@ -99,24 +117,103 @@ object CaptureSourceFilter {
         return if (matched.isEmpty()) allowed else matched
     }
 
+    /**
+     * Cheap HDMI sticks (Audio Express AXHDCAP and the same MacroSilicon-class
+     * layout) often leave the audio function unnamed, or name it "USB Audio",
+     * while Android reports the input address as `card=N;device=M`. That does
+     * not equal the video device's `/dev/bus/usb/...` path, and the video
+     * product string is frequently empty. While the SMART webcam is on the bus,
+     * those inputs are still the capture card when it is the only other USB
+     * device with a UAC interface.
+     */
+    fun chooseAudio(
+        input: AudioInputIdentity,
+        usbDevices: List<UsbIdentity>,
+        productHint: String? = null,
+        playingDeviceName: String? = null,
+    ): AudioChoice {
+        if (matchesExcludedName(input.productName)) {
+            return AudioChoice(false, "excluded name")
+        }
+        val blockedDevices = usbDevices.filter { device ->
+            isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
+        }
+        if (blockedDevices.any { device -> tied(input, device) }) {
+            return AudioChoice(false, "matches the SMART webcam")
+        }
+        if (usbDevices.none { it.vendorId == SMART_VENDOR_ID }) {
+            return AudioChoice(true, "no SMART webcam on USB")
+        }
+        val captures = usbDevices.filter { device ->
+            !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
+        }
+        val hint = productHint?.trim().orEmpty()
+        if (hint.length >= 4 && input.productName?.contains(hint, ignoreCase = true) == true) {
+            return AudioChoice(true, "product name matches the capture card")
+        }
+        val playing = captures.firstOrNull { device ->
+            !device.deviceName.isNullOrBlank() && device.deviceName == playingDeviceName
+        }
+        if (playing != null && tied(input, playing)) {
+            return AudioChoice(true, "matches the playing capture card")
+        }
+        if (captures.any { device -> tied(input, device) }) {
+            return AudioChoice(true, "matches a capture card")
+        }
+        val audioCaptures = captures.filter { it.hasAudioInterface }
+        if (isGenericUacName(input.productName) && audioCaptures.size == 1) {
+            val only = audioCaptures[0]
+            val playingOk = playingDeviceName.isNullOrBlank() || playingDeviceName == only.deviceName
+            if (playingOk) {
+                return AudioChoice(true, "generic USB audio from the capture card")
+            }
+        }
+        return AudioChoice(false, "SMART webcam is connected and this input is not the capture card")
+    }
+
+    fun audioDecision(
+        input: AudioInputIdentity,
+        usbDevices: List<UsbIdentity>,
+        productHint: String? = null,
+        playingDeviceName: String? = null,
+    ): String {
+        val choice = chooseAudio(input, usbDevices, productHint, playingDeviceName)
+        return if (choice.use) "use: ${choice.detail}" else "blocked: ${choice.detail}"
+    }
+
     fun isBlockedAudio(
         input: AudioInputIdentity,
         usbDevices: List<UsbIdentity>,
         productHint: String? = null,
+        playingDeviceName: String? = null,
     ): Boolean {
-        if (matchesExcludedName(input.productName)) return true
-        val blockedDevices = usbDevices.filter { device ->
-            device.vendorId == SMART_VENDOR_ID || matchesExcludedName(device.productName, device.manufacturerName)
+        return !chooseAudio(input, usbDevices, productHint, playingDeviceName).use
+    }
+
+    /**
+     * USB device to read from directly when Android's audio HAL lists no input.
+     * Prefers the device that is already playing video, and otherwise the only
+     * non-SMART device that actually has a UAC interface.
+     */
+    fun directUsbDeviceName(playingDeviceName: String?, usbDevices: List<UsbIdentity>): String? {
+        val playing = usbDevices.firstOrNull { it.deviceName == playingDeviceName }
+        if (playing != null &&
+            playing.hasAudioInterface &&
+            !isExcludedUsb(playing.vendorId, playing.productName, playing.manufacturerName)
+        ) {
+            return playing.deviceName
         }
-        if (blockedDevices.any { device -> tied(input, device) }) return true
-        if (usbDevices.none { it.vendorId == SMART_VENDOR_ID }) return false
-        val hint = productHint?.trim().orEmpty()
-        if (hint.length >= 4 && input.productName?.contains(hint, ignoreCase = true) == true) return false
-        return !usbDevices.any { device ->
-            device.vendorId != SMART_VENDOR_ID &&
-                !matchesExcludedName(device.productName, device.manufacturerName) &&
-                tied(input, device)
+        if (playingDeviceName.isNullOrBlank()) return null
+        val others = usbDevices.filter { device ->
+            device.hasAudioInterface &&
+                !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
         }
+        return if (others.size == 1) others[0].deviceName else null
+    }
+
+    fun isGenericUacName(name: String?): Boolean {
+        val text = normalize(name) ?: return true
+        return GENERIC_UAC_PREFIXES.any { prefix -> text == prefix || text.startsWith("$prefix ") }
     }
 
     private fun tied(input: AudioInputIdentity, device: UsbIdentity): Boolean {

@@ -22,11 +22,15 @@ The USB path uses [UVCAndroid](https://github.com/shiyinghan/UVCAndroid) `1.0.13
 
 ## How sound is played
 
-The capture card's video and audio are separate USB functions (UVC and UAC). The app does not try to pull audio out of the video stream.
+The capture card's video and audio are separate USB functions (UVC and UAC) on the same USB device. The app does not try to pull audio out of the video stream, and it does not use the board's speaker volume as a substitute for a missing input.
 
-When preview starts it looks for an input of type USB device, USB headset, or USB accessory, records PCM from that device, and writes it to an `AudioTrack` with `USAGE_MEDIA` and `CONTENT_TYPE_MOVIE`. From Android 10 up the track sets `ALLOW_CAPTURE_BY_ALL`, so screen share and cast apps that capture media playback can hear it. Nothing forces the track onto the USB gadget; media usage follows the board's current route (room speakers or the board's HDMI out).
+When preview starts it looks for an input of type USB device, USB headset, or USB accessory, records PCM from that device, and writes it to an `AudioTrack` with `USAGE_MEDIA` and `CONTENT_TYPE_MOVIE`. From Android 10 up the track sets `ALLOW_CAPTURE_BY_ALL`, so screen share and cast apps that capture media playback can hear it. Nothing forces the track onto the USB gadget; media usage follows the board's current route (room speakers or the board's HDMI out). If the input is not there yet, the app waits and retries. The built-in mic is refused: looping it into the room speakers howls.
 
-USB vendor `0x0B8C` is never that input. The SMART camera's mic, and the board's mic array on the same vendor id, are excluded by vendor id, by the webcam names above, and by a USB address that points at that device. While that vendor is connected, an unnamed USB input is not used either, so the loopback cannot fall through to the board microphone. The built-in mic is refused for the same reason: looping it into the room speakers howls.
+USB vendor `0x0B8C` is never that input. The SMART camera's mic is excluded by vendor id, by the webcam names above, and by a USB address that points at that device. Cheap HDMI sticks such as the Audio Express AXHDCAP (MacroSilicon-class, commonly `534d:2109`, but the code does not require that id) leave the audio product string empty or call it "USB Audio", while Android's address looks like `card=2;device=0` rather than `/dev/bus/usb/...`. That input is used when it is the only non-SMART USB device that actually has a UAC interface. A second capture card with its own UAC interface is not guessed by name.
+
+UVCAndroid 1.0.13 claims the video interfaces only, so the kernel can keep the audio driver. Some board images still drop the USB input once video is open. After a short wait with no usable input, the app claims the audio interfaces on the playing capture card (never the video interfaces, and never vendor `0x0B8C`) and reads the isochronous PCM itself. Sticks in this class often describe that stream as 16-bit mono at 96 kHz while the bytes are stereo at 48 kHz; the direct reader follows the descriptor (the input terminal says two channels), and the Android input path does the same when the HAL reports only 96 kHz mono. Neither path is tied to one vendor id.
+
+Long-press the status line, or the picture, to show USB devices (vendor, product, names, interfaces) and every audio input with its type, address, rates, and whether this app will use it. Leave that screen up and photograph it if sound is still missing.
 
 A short hold (80 ms on the UVC path, 40 ms on Camera2) keeps the sound from racing ahead of the picture. The track itself uses a small buffer and, on Android 8+, low-latency mode.
 
@@ -39,7 +43,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.3-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.4-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -122,30 +126,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.0.3-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.4-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.4` with `hdmiVersionName = "1.0.3"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.5` with `hdmiVersionName = "1.0.4"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.4`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.5`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.0.4
-git push origin v1.0.4
+git tag v1.0.5
+git push origin v1.0.5
 ```
 
-4. Download `dvd-player-1.0.4-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.0.5-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -156,7 +160,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.0.3-debug.apk
+adb install -r dvd-player-1.0.4-debug.apk
 ```
 
 `adb install -r -g` also grants the runtime permissions, which helps when the settings UI is awkward.
@@ -173,8 +177,8 @@ These are real constraints, not a test plan:
 
 - HDCP-protected HDMI sources (many set-top boxes and some DVD menus) show a black frame. The capture card cannot strip HDCP. A plain DVD player is often fine; a protected player is not.
 - Preview is not a wire. Expect a few frames of delay. The audio hold is a fixed compromise, not a measured lip-sync lock, so some cards will still be slightly early or late.
-- Opening the dongle with libuvc claims the video interface. On some Android builds that also knocks out the USB audio driver, and the picture plays with no sound. The system-camera row avoids that when it exists. A video-only dongle, or a board image with no USB audio HAL, also plays picture only.
-- If two capture cards are connected, audio follows a matching product name when it can, otherwise the first USB input. Video and audio can come from different dongles in that case.
+- Opening the dongle with libuvc claims the video interfaces. On some Android builds that also knocks out the USB audio driver. The app then reads the UAC interface itself. A stick with no audio function, or a board that refuses isochronous USB reads, still plays picture only. Long-press the status line for the USB and input list.
+- If two capture cards are connected, a generic "USB Audio" input is not guessed. Direct USB audio follows the card that is playing video. Video and audio can still come from different dongles when each input has a distinct product name.
 - 4K modes are not requested. USB 2.0 hosts on tablets drop them. A stick that only offers an uncompressed mode above 1080p may fail to stream.
 - USB hot-plug broadcasts are missing on some boards. The source list also re-reads USB devices every couple of seconds while it is on screen.
 - The USB permission dialog is a system screen. Denying it returns to the list. The library waits on that grant on its own thread; leaving the dialog up and backing out is safe, but the grant still has to be answered.

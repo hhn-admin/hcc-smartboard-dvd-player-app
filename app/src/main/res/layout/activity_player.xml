@@ -30,6 +30,7 @@
         android:paddingTop="10dp"
         android:paddingEnd="18dp"
         android:paddingBottom="10dp"
+        android:longClickable="true"
         android:textColor="@color/on_surface"
         android:textSize="18sp" />
 
@@ -50,4 +51,41 @@
             android:text="@string/back"
             android:textSize="20sp" />
     </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/diagnostics"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F2000000"
+        android:clickable="true"
+        android:fillViewport="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/diagnostics_close"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="140dp"
+                android:minHeight="64dp"
+                android:text="@string/audio_diagnostics_close"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/diagnostics_body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="12dp"
+                android:textColor="@color/on_surface"
+                android:textIsSelectable="true"
+                android:textSize="16sp"
+                android:typeface="monospace" />
+        </LinearLayout>
+    </ScrollView>
 </FrameLayout>
