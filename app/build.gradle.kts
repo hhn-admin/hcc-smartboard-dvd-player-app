@@ -6,8 +6,8 @@ plugins {
 // MDM updates identify the app by applicationId (com.hcc.dvdplayer) and require a
 // higher versionCode signed with the same certificate. Do not change applicationId.
 // Bump both version fields together, then tag the commit v<hdmiVersionName>.
-val hdmiVersionCode = 4
-val hdmiVersionName = "1.0.3"
+val hdmiVersionCode = 5
+val hdmiVersionName = "1.0.4"
 
 val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
 val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
@@ -17,6 +17,7 @@ val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 android {
     namespace = "com.hcc.dvdplayer"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.hcc.dvdplayer"
@@ -65,6 +66,14 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     packaging {

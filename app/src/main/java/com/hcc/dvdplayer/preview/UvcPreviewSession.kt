@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * to the UVC interface directly, which is what still works on those images.
  * The bandwidth quirk is on because cheap HDMI capture sticks often advertise a
  * dwMaxPayloadTransferSize that makes MJPEG negotiation fail without it.
+ * libuvc claims the video interfaces only, so the UAC interfaces stay available
+ * to Android or to [com.hcc.dvdplayer.audio.UsbUacCapture].
  */
 class UvcPreviewSession(
     private val targetDeviceName: String,

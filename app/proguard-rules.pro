@@ -1,3 +1,4 @@
+-keep class com.hcc.dvdplayer.audio.IsochronousReader { native <methods>; }
 -keep class com.herohan.uvcapp.** { *; }
 -keep class com.serenegiant.usb.** { *; }
 -keepclassmembers class * implements com.serenegiant.usb.IButtonCallback { *; }
