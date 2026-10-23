@@ -8,7 +8,7 @@
     <string name="step_tap">Tap the USB source</string>
     <string name="step_tap_only">Tap the source</string>
     <string name="empty_no_usb_host">This board has no USB host port, so you cannot plug in the DVD capture card here.</string>
-    <string name="permission_note">Camera and microphone access are only for the DVD capture card. Android calls the USB audio input a microphone.</string>
+    <string name="permission_note">This system camera needs camera and microphone access. The USB capture card does not.</string>
     <string name="allow_access">Allow camera and microphone</string>
     <string name="open_settings">Open app settings</string>
     <string name="camera_permission_required">Camera permission is required for this source.</string>
@@ -23,6 +23,7 @@
     <string name="audio_starting">Starting sound…</string>
     <string name="audio_playing">Sound on</string>
     <string name="audio_missing">No USB audio from the DVD capture card. Video only.</string>
+    <string name="audio_need_microphone">Allow microphone access so the DVD capture card can play sound.</string>
     <string name="audio_permission_denied">Microphone permission is off, so the DVD capture card stays muted.</string>
     <string name="audio_failed">USB audio did not start. Video only. The built-in mic is not used.</string>
     <string name="audio_diagnostics_close">Close</string>

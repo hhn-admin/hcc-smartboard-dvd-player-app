@@ -16,13 +16,19 @@ object PickerPrompt {
         return if (usb.size == 1) usb.first() else null
     }
 
+    /**
+     * A USB capture card starts on its own with no runtime permission: libuvc
+     * and the direct UAC reader use the USB device grant. A Camera2 source
+     * still waits until camera and microphone are granted.
+     */
     fun shouldAutoStart(
         sources: List<ListedSource>,
-        permissionsGranted: Boolean,
+        grantedPermissions: Set<String>,
         returnedFromPlayer: Boolean,
         openInProgress: Boolean,
     ): Boolean {
         if (sources.size != 1 || !sources.first().captureCard) return false
-        return permissionsGranted && !returnedFromPlayer && !openInProgress
+        if (returnedFromPlayer || openInProgress) return false
+        return RuntimePermissions.requiredFor(sources.first()).all { it in grantedPermissions }
     }
 }

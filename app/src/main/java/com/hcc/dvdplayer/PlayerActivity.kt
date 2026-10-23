@@ -1,6 +1,5 @@
 package com.hcc.dvdplayer
 
-import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -13,6 +12,7 @@ import android.view.SurfaceHolder
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -22,6 +22,7 @@ import com.hcc.dvdplayer.audio.AudioLoopback
 import com.hcc.dvdplayer.audio.PlaybackDiagnostics
 import com.hcc.dvdplayer.databinding.ActivityPlayerBinding
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
+import com.hcc.dvdplayer.logic.RuntimePermissions
 import com.hcc.dvdplayer.preview.Camera2PreviewSession
 import com.hcc.dvdplayer.preview.UvcPreviewSession
 import com.hcc.dvdplayer.source.SourceCatalog
@@ -34,6 +35,8 @@ class PlayerActivity : AppCompatActivity() {
     private var camera2: Camera2PreviewSession? = null
     private var audio: AudioLoopback? = null
     private var audioStarted = false
+    private var recordRequestInFlight = false
+    private var pendingSyncDelay = AudioFormatPlanner.UVC_SYNC_DELAY_MS
     private var leaving = false
     private var resolution: String? = null
     private var audioMessage: String? = null
@@ -44,6 +47,19 @@ class PlayerActivity : AppCompatActivity() {
     }
     private val hideStatus = Runnable {
         if (!audioSticky) binding.status.visibility = View.GONE
+    }
+
+    private val recordAudioRequest = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        recordRequestInFlight = false
+        if (leaving) return@registerForActivityResult
+        if (granted) {
+            audioStarted = false
+            startAudio(pendingSyncDelay)
+        } else {
+            showAudio(getString(R.string.audio_permission_denied), sticky = true)
+        }
     }
 
     private val usbReceiver = object : BroadcastReceiver() {
@@ -176,7 +192,7 @@ class PlayerActivity : AppCompatActivity() {
             finishWithNotice(getString(R.string.open_failed))
             return
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, RuntimePermissions.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             finishWithNotice(getString(R.string.camera_permission_required))
             return
         }
@@ -218,12 +234,14 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun startAudio(syncDelayMs: Int) {
-        if (audioStarted || leaving) return
-        audioStarted = true
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            showAudio(getString(R.string.audio_permission_denied), sticky = true)
+        if (audioStarted || leaving || recordRequestInFlight) return
+        pendingSyncDelay = syncDelayMs
+        val usb = intent.getStringExtra(EXTRA_KIND) == KIND_USB
+        if (!usb && !hasRecordAudio()) {
+            requestRecordAudio()
             return
         }
+        audioStarted = true
         val loopback = AudioLoopback(
             context = this,
             productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
@@ -235,13 +253,33 @@ class PlayerActivity : AppCompatActivity() {
                 AudioLoopback.Status.STARTING -> showAudio(getString(R.string.audio_starting), sticky = false)
                 AudioLoopback.Status.PLAYING -> showAudio(getString(R.string.audio_playing), sticky = false)
                 AudioLoopback.Status.NO_USB_INPUT -> showAudio(getString(R.string.audio_missing), sticky = true)
-                AudioLoopback.Status.PERMISSION_DENIED -> showAudio(getString(R.string.audio_permission_denied), sticky = true)
+                AudioLoopback.Status.NEEDS_RECORD_AUDIO,
+                AudioLoopback.Status.PERMISSION_DENIED -> requestRecordAudio()
                 AudioLoopback.Status.FAILED -> showAudio(getString(R.string.audio_failed), sticky = true)
                 AudioLoopback.Status.STOPPED -> Unit
             }
         }
         audio = loopback
         loopback.start()
+    }
+
+    private fun requestRecordAudio() {
+        if (leaving || recordRequestInFlight) return
+        if (hasRecordAudio()) {
+            showAudio(getString(R.string.audio_failed), sticky = true)
+            return
+        }
+        recordRequestInFlight = true
+        audioStarted = false
+        val current = audio
+        audio = null
+        current?.stop()
+        showAudio(getString(R.string.audio_need_microphone), sticky = true)
+        recordAudioRequest.launch(RuntimePermissions.RECORD_AUDIO)
+    }
+
+    private fun hasRecordAudio(): Boolean {
+        return ContextCompat.checkSelfPermission(this, RuntimePermissions.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun showAudio(message: String, sticky: Boolean) {

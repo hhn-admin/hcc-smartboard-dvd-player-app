@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Same devices UsbVideoFilter keeps: USB video class 14 (video control and
+  video streaming) and composite miscellaneous class 239 subclass 2.
+  Android matches each entry against the device descriptor and every interface.
+  A device filter cannot exclude a vendor id, so the SMART webcam (VID 0x0B8C)
+  matches too. PickerActivity ignores that device and does not play it.
+-->
+<resources>
+    <usb-device class="14" />
+    <usb-device class="239" subclass="2" />
+</resources>
