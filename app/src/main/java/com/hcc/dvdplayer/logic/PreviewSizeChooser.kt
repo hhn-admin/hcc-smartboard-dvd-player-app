@@ -3,9 +3,14 @@ package com.hcc.dvdplayer.logic
 import kotlin.math.abs
 
 /**
- * Picks a UVC mode that a USB 2.0 host can actually carry.
- * HDMI capture dongles should be asked for MJPEG at or below 1080p; uncompressed
- * 1080p is about 60 MB/s and routinely fails negotiation on tablet USB hosts.
+ * Picks a UVC mode that a USB 2.0 host can actually carry, and the on-screen
+ * rectangle for that frame.
+ *
+ * HDMI capture dongles should be asked for MJPEG at or below 1080p.
+ * Uncompressed 1080p is about 60 MB/s and routinely fails negotiation.
+ * The on-screen size is the largest rectangle of the frame's aspect that fits
+ * the screen (or covers it, when cropping). It is never the capture's native
+ * pixel size: a 640x480 frame still scales up until one side hits the screen.
  */
 data class VideoMode(
     val type: Int,
@@ -24,19 +29,28 @@ object PreviewSizeChooser {
     const val TARGET_FPS = 30
 
     fun choose(modes: List<VideoMode>, preferMjpeg: Boolean = true): VideoMode? {
-        val usable = modes.filter { it.width > 0 && it.height > 0 }
-        if (usable.isEmpty()) return null
+        return ranked(modes, preferMjpeg).firstOrNull()
+    }
 
+    /**
+     * Best mode first. MJPEG at or below 1080p, largest area, then smaller
+     * modes, and only then a mode above 1080p (smallest of those).
+     */
+    fun ranked(modes: List<VideoMode>, preferMjpeg: Boolean = true): List<VideoMode> {
+        val usable = modes.filter { it.width > 0 && it.height > 0 }
+        if (usable.isEmpty()) return emptyList()
         val mjpeg = usable.filter { isMjpeg(it.type) }
         val pool = if (preferMjpeg && mjpeg.isNotEmpty()) mjpeg else usable
-        val withinCap = pool.filter { it.width <= MAX_WIDTH && it.height <= MAX_HEIGHT }
-        val selected = if (withinCap.isNotEmpty()) {
-            withinCap.maxWith(areaThenCloserFps())
-        } else {
-            pool.minWith(compareBy<VideoMode> { it.width.toLong() * it.height }
-                .thenBy { abs(preferredFps(it) - TARGET_FPS) })
-        }
-        return selected.copy(fps = preferredFps(selected))
+        val within = pool.filter { it.width <= MAX_WIDTH && it.height <= MAX_HEIGHT }
+        val above = pool.filter { it.width > MAX_WIDTH || it.height > MAX_HEIGHT }
+        val ordered = within.sortedWith(areaThenCloserFps().reversed()) +
+            above.sortedWith(
+                compareBy<VideoMode> { it.width.toLong() * it.height }
+                    .thenBy { abs(preferredFps(it) - TARGET_FPS) },
+            )
+        return ordered
+            .distinctBy { Triple(it.type, it.width, it.height) }
+            .map { it.copy(fps = preferredFps(it)) }
     }
 
     fun preferredFps(mode: VideoMode): Int {
@@ -49,12 +63,30 @@ object PreviewSizeChooser {
         )
     }
 
+    /** Largest same-aspect rectangle that fits inside the screen. Letterboxes. */
     fun fitInside(containerWidth: Int, containerHeight: Int, videoWidth: Int, videoHeight: Int): Pair<Int, Int> {
+        return frameSize(containerWidth, containerHeight, videoWidth, videoHeight, crop = false)
+    }
+
+    /** Smallest same-aspect rectangle that covers the screen. The overflow is cropped. */
+    fun cover(containerWidth: Int, containerHeight: Int, videoWidth: Int, videoHeight: Int): Pair<Int, Int> {
+        return frameSize(containerWidth, containerHeight, videoWidth, videoHeight, crop = true)
+    }
+
+    fun frameSize(
+        containerWidth: Int,
+        containerHeight: Int,
+        videoWidth: Int,
+        videoHeight: Int,
+        crop: Boolean,
+    ): Pair<Int, Int> {
         if (containerWidth <= 0 || containerHeight <= 0) return 0 to 0
         if (videoWidth <= 0 || videoHeight <= 0) return containerWidth to containerHeight
         val videoAspect = videoWidth.toDouble() / videoHeight.toDouble()
         val containerAspect = containerWidth.toDouble() / containerHeight.toDouble()
-        return if (videoAspect > containerAspect) {
+        val widerThanScreen = videoAspect > containerAspect
+        val matchWidth = if (crop) !widerThanScreen else widerThanScreen
+        return if (matchWidth) {
             val height = (containerWidth / videoAspect).toInt().coerceAtLeast(1)
             containerWidth to height
         } else {

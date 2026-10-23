@@ -50,10 +50,12 @@ object AudioDiagnosticsFormatter {
         directUsb: String,
         devices: List<UsbDeviceLine>,
         inputs: List<InputLine>,
+        picture: String = "unknown",
     ): String {
         val text = StringBuilder()
         text.append("DVD Player ").append(versionName).append('\n')
         text.append("USB audio diagnostics\n")
+        text.append("Picture: ").append(picture).append('\n')
         text.append("Playing device: ").append(blank(playingDeviceName)).append('\n')
         text.append("Name hint: ").append(blank(productHint)).append('\n')
         text.append("Direct USB: ").append(directUsb).append('\n')

@@ -18,7 +18,11 @@ SMART boards always have a SMART Ultra HD Camera 120 (model SWC-120UHD) on USB. 
 
 What remains is a USB video device. A name that looks like a capture dongle (for example "capture", "HDMI", "UVC", "Mack", "Elgato", "ezcap", "AVG", "MS210x", or "MS213x") is treated as the DVD capture card and can start on its own when it is the only row. If a USB video device is present but the name is ambiguous, it is still listed and the SMART webcam stays hidden, but playback does not start until someone taps it. Camera2 is used only when no USB source was kept and the camera's own name looks like a capture card. Until then the screen keeps saying "Plug in the DVD capture card".
 
-The USB path uses [UVCAndroid](https://github.com/shiyinghan/UVCAndroid) `1.0.13` (`com.herohan:UVCAndroid` on Maven Central). It is a maintained libusb/libuvc stack (the line of saki4510t/UVCCamera and AndroidUSBCamera) that opens the UVC interface through the Android USB host API. No root. The preview request prefers MJPEG at or below 1080p, because uncompressed 1080p does not fit on a USB 2.0 host, and sets libuvc's bandwidth quirk that cheap HDMI sticks need in order to negotiate. libuvc does not use `android.permission.CAMERA`.
+The USB path uses [UVCAndroid](https://github.com/shiyinghan/UVCAndroid) `1.0.13` (`com.herohan:UVCAndroid` on Maven Central). It is a maintained libusb/libuvc stack (the line of saki4510t/UVCCamera and AndroidUSBCamera) that opens the UVC interface through the Android USB host API. No root. libuvc does not use `android.permission.CAMERA`.
+
+The picture fills the screen without stretching. UVCAndroid's default open, when no size is passed, is **640×480**. That 4:3 frame fit inside a 16:9 board looks smaller than a 16:9 frame, and a DVD menu at 720×480 does the same. The app now asks for **1920×1080 MJPEG** first, then the next smaller listed MJPEG mode (720p, then 480p). It does not ask for 4K: uncompressed or 4K MJPEG is too much for a USB 2.0 host. The preview surface is measured to the screen, not to the capture's pixel size, so a small frame scales up until it touches an edge (fit, centered). The aspect ratio is kept. When the negotiated size changes, the surface is measured again.
+
+Tap the picture twice, or tap **Zoom to fill** on the top bar, to crop the bars instead. That still does not stretch. It is off by default. Bars that are already inside a 16:9 frame (a 4:3 DVD menu captured as 1080p) stay, because the frame itself matches a 16:9 screen. Long-press the status line for the capture resolution and whether fit or zoom is on.
 
 `PickerActivity` also handles `USB_DEVICE_ATTACHED` with `res/xml/device_filter.xml`. The filter matches USB video class 14 and composite class 239 subclass 2, on the device descriptor or any interface, which is the same match as `UsbVideoFilter`. A device filter cannot exclude a vendor id, so the SMART webcam matches too. An attach for vendor `0x0B8C` (or a SMART / webcam name) is ignored: no playback and no USB permission request. If that attach is what opened the activity, the activity closes. Accept **Always** only on the chooser for the capture card.
 
@@ -67,7 +71,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.6-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.0.7-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -150,30 +154,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.0.6-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.0.7-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.7` with `hdmiVersionName = "1.0.6"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.0.8` with `hdmiVersionName = "1.0.7"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.7`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.0.8`, `1.1.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.0.7
-git push origin v1.0.7
+git tag v1.0.8
+git push origin v1.0.8
 ```
 
-4. Download `dvd-player-1.0.7-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.0.8-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -184,7 +188,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.0.6-debug.apk
+adb install -r dvd-player-1.0.7-debug.apk
 ```
 
 `adb install -r -g` grants `android.permission.CAMERA` and `android.permission.RECORD_AUDIO`. It does not grant the USB device permission. See [Pre-granting permissions with an MDM](#pre-granting-permissions-with-an-mdm).
@@ -203,7 +207,7 @@ These are real constraints, not a test plan:
 - Preview is not a wire. Expect a few frames of delay. The audio hold is a fixed compromise, not a measured lip-sync lock, so some cards will still be slightly early or late.
 - Opening the dongle with libuvc claims the video interfaces. On some Android builds that also knocks out the USB audio driver. The app then reads the UAC interface itself. A stick with no audio function, or a board that refuses isochronous USB reads, still plays picture only. Long-press the status line for the USB and input list.
 - If two capture cards are connected, a generic "USB Audio" input is not guessed. Direct USB audio follows the card that is playing video. Video and audio can still come from different dongles when each input has a distinct product name.
-- 4K modes are not requested. USB 2.0 hosts on tablets drop them. A stick that only offers an uncompressed mode above 1080p may fail to stream.
+- 4K capture is not requested. USB 2.0 hosts drop it. A 1080p frame is scaled up to the screen. A stick that only offers an uncompressed mode above 1080p may fail to stream.
 - USB hot-plug broadcasts are missing on some boards. The source list also re-reads USB devices every couple of seconds while it is on screen.
 - The USB device dialog is a system screen. Denying it returns to the list. The library waits on that grant on its own thread; leaving the dialog up and backing out is safe, but the grant still has to be answered. Accepting the attach chooser for this connection skips that dialog. Runtime-permission policy cannot pre-grant it.
 - The app is landscape (`sensorLandscape`). A board whose firmware freezes orientation may letterbox it.

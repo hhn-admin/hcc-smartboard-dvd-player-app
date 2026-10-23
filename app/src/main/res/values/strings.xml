@@ -18,6 +18,10 @@
     <string name="opening_usb">Opening the DVD capture card. Allow USB access if Android asks.</string>
     <string name="opening_camera">Opening the external camera.</string>
     <string name="back">Back</string>
+    <string name="zoom_to_fill">Zoom to fill</string>
+    <string name="fit_screen">Fit screen</string>
+    <string name="zoom_on">Zoomed to fill the screen</string>
+    <string name="zoom_off">Fitted to the screen</string>
     <string name="preview_description">Live video</string>
     <string name="resolution_fmt">%1$d×%2$d</string>
     <string name="audio_starting">Starting sound…</string>
