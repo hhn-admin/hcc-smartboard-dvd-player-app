@@ -21,14 +21,15 @@ object UsbEvents {
         }
     }
 
-    fun deviceName(intent: Intent?): String? {
+    fun device(intent: Intent?): UsbDevice? {
         if (intent == null) return null
-        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
         }
-        return device?.deviceName
     }
+
+    fun deviceName(intent: Intent?): String? = device(intent)?.deviceName
 }

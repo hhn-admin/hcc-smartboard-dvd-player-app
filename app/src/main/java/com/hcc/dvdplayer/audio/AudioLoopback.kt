@@ -35,6 +35,12 @@ import com.hcc.dvdplayer.logic.UacPlayback
  * The built-in microphone is refused. Looping that into the room speakers is a
  * feedback howl, and it is not the capture card. USB vendor 0x0B8C (the SMART
  * Ultra HD Camera and its mic array) is refused as well.
+ *
+ * [RECORD_AUDIO] is required only for [AudioRecord]. The direct isochronous
+ * reader uses the USB device permission the video path already holds. When the
+ * microphone permission is already granted, [AudioRecord] stays first: that is
+ * the path confirmed on the board. Otherwise the direct reader runs, and the
+ * listener is asked for [RECORD_AUDIO] only if that reader never delivers PCM.
  */
 class AudioLoopback(
     context: Context,
@@ -48,6 +54,7 @@ class AudioLoopback(
         PLAYING,
         NO_USB_INPUT,
         PERMISSION_DENIED,
+        NEEDS_RECORD_AUDIO,
         FAILED,
         STOPPED,
     }
@@ -70,10 +77,6 @@ class AudioLoopback(
 
     fun start() {
         if (running) return
-        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            publish(Status.PERMISSION_DENIED)
-            return
-        }
         running = true
         publish(Status.STARTING)
         val callback = object : AudioDeviceCallback() {
@@ -120,67 +123,113 @@ class AudioLoopback(
 
     private fun runLoop() {
         while (running) {
-            val inputs = usbInputs()
-            if (inputs.isEmpty()) {
-                quietPolls += 1
-                if (quietPolls == 1) {
-                    directUsbNote = "waiting for a USB input"
-                    publish(Status.STARTING)
-                    waitForUsbInput()
-                    continue
-                }
-                val pumped = try {
-                    directUsbNote = "opening the capture card's USB audio"
-                    tryDirectUsb()
-                } catch (error: Exception) {
-                    Log.e(TAG, "direct usb audio", error)
-                    directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
-                    false
-                }
-                releaseStream()
-                if (!running) break
-                if (pumped) {
-                    quietPolls = 0
-                    continue
-                }
-                if (directUsbNote.startsWith("opening")) {
-                    directUsbNote = "no USB input, and direct USB audio did not start"
-                }
-                publish(Status.NO_USB_INPUT)
-                waitForUsbInput()
+            if (!recordAudioGranted()) {
+                if (!runDirectWithoutMicrophone()) return
                 continue
             }
-            quietPolls = 0
-            directUsbNote = "using Android USB input"
-            val pumped = try {
-                openAndPump(inputs)
-            } catch (error: SecurityException) {
-                Log.e(TAG, "record permission", error)
-                publish(Status.PERMISSION_DENIED)
-                return
-            } catch (error: Exception) {
-                Log.e(TAG, "audio loop", error)
-                false
+            if (!runWithMicrophonePermission()) return
+        }
+    }
+
+    /**
+     * No [RECORD_AUDIO] yet. Try the capture card's own UAC interface. Ask for
+     * the microphone permission only when that reader never delivers PCM.
+     * A reader that already played and then stopped is retried without a prompt.
+     */
+    private fun runDirectWithoutMicrophone(): Boolean {
+        val pumped = try {
+            directUsbNote = "opening the capture card's USB audio"
+            tryDirectUsb(requirePcm = true)
+        } catch (error: Exception) {
+            Log.e(TAG, "direct usb audio", error)
+            directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
+            false
+        }
+        releaseStream()
+        if (!running) return false
+        if (pumped) return true
+        if (status == Status.PLAYING) {
+            directUsbNote = "direct USB audio stopped; retrying"
+            publish(Status.NO_USB_INPUT)
+            pauseBriefly()
+            return true
+        }
+        directUsbNote = "direct USB audio did not play; microphone permission needed"
+        running = false
+        publish(Status.NEEDS_RECORD_AUDIO)
+        return false
+    }
+
+    private fun runWithMicrophonePermission(): Boolean {
+        val inputs = usbInputs()
+        if (inputs.isEmpty()) {
+            quietPolls += 1
+            if (quietPolls == 1) {
+                directUsbNote = "waiting for a USB input"
+                publish(Status.STARTING)
+                waitForUsbInput()
+                return running
             }
-            releaseStream()
-            if (!running) break
-            if (pumped) continue
-            val direct = try {
-                tryDirectUsb()
+            val pumped = try {
+                directUsbNote = "opening the capture card's USB audio"
+                tryDirectUsb(requirePcm = false)
             } catch (error: Exception) {
                 Log.e(TAG, "direct usb audio", error)
                 directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
                 false
             }
             releaseStream()
-            if (!running) break
-            if (direct) continue
-            publish(Status.FAILED)
-            pauseBriefly()
+            if (!running) return false
+            if (pumped) {
+                quietPolls = 0
+                return true
+            }
+            if (directUsbNote.startsWith("opening")) {
+                directUsbNote = "no USB input, and direct USB audio did not start"
+            }
+            publish(Status.NO_USB_INPUT)
+            waitForUsbInput()
+            return running
         }
+        quietPolls = 0
+        directUsbNote = "using Android USB input"
+        val pumped = try {
+            openAndPump(inputs)
+        } catch (error: SecurityException) {
+            Log.e(TAG, "record permission", error)
+            running = false
+            publish(Status.PERMISSION_DENIED)
+            return false
+        } catch (error: Exception) {
+            Log.e(TAG, "audio loop", error)
+            false
+        }
+        releaseStream()
+        if (!running) return false
+        if (pumped) return true
+        val direct = try {
+            tryDirectUsb(requirePcm = false)
+        } catch (error: Exception) {
+            Log.e(TAG, "direct usb audio", error)
+            directUsbNote = "direct USB audio failed: ${error.message ?: error.javaClass.simpleName}"
+            false
+        }
+        releaseStream()
+        if (!running) return false
+        if (direct) return true
+        publish(Status.FAILED)
+        pauseBriefly()
+        return running
     }
 
-    private fun tryDirectUsb(): Boolean {
+    private fun recordAudioGranted(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            appContext,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun tryDirectUsb(requirePcm: Boolean): Boolean {
         val target = CaptureSourceFilter.directUsbDeviceName(usbDeviceName, connectedUsbDevices())
         if (target == null) {
             directUsbNote = "no capture-card audio interface to open"
@@ -216,7 +265,7 @@ class AudioLoopback(
             track = audioTrack
             requestFocus(attributes)
             Log.i(TAG, "Direct USB audio ${session.summary} delay=${syncDelayMs}ms")
-            return pumpFrom(session::read, audioTrack, plan)
+            return pumpFrom(session::read, audioTrack, plan, requirePcm = requirePcm)
         } finally {
             session.close()
         }
@@ -384,6 +433,7 @@ class AudioLoopback(
         read: (ByteArray) -> Int,
         audioTrack: AudioTrack,
         plan: AudioFormatPlanner.Plan,
+        requirePcm: Boolean = false,
         afterPreroll: () -> Boolean = { true },
     ): Boolean {
         val line = PcmDelayLine(plan.delayBytes)
@@ -394,6 +444,11 @@ class AudioLoopback(
             val got = read(tmp)
             if (got < 0) return false
             if (got > 0) line.write(tmp, 0, got)
+        }
+        if (requirePcm && !line.primed()) {
+            directUsbNote = "direct USB audio produced no PCM"
+            Log.w(TAG, directUsbNote)
+            return false
         }
         if (!afterPreroll()) return false
         try {

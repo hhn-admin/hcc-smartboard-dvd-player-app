@@ -1,8 +1,8 @@
 package com.hcc.dvdplayer
 
-import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,7 +16,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlin.math.max
 import com.hcc.dvdplayer.databinding.ActivityPickerBinding
+import com.hcc.dvdplayer.logic.CaptureSourceFilter
 import com.hcc.dvdplayer.logic.PickerPrompt
+import com.hcc.dvdplayer.logic.RuntimePermissions
 import com.hcc.dvdplayer.source.ListedSource
 import com.hcc.dvdplayer.source.SourceCatalog
 import com.hcc.dvdplayer.source.UsbEvents
@@ -33,22 +35,28 @@ class PickerActivity : AppCompatActivity() {
     private var returnedFromPlayer = false
     private var openInProgress = false
     private var inRefresh = false
+    private var closedForExcludedUsb = false
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         val source = pending
         pending = null
-        val granted = missingPermissions().isEmpty()
-        permissionDenied = !granted
-        renderPermission()
-        if (granted) {
+        val stillMissing = if (source != null) {
+            RuntimePermissions.requiredFor(source).filterNot(::has)
+        } else {
+            missingPermissions(catalog.list())
+        }
+        permissionDenied = stillMissing.isNotEmpty()
+        if (stillMissing.isEmpty()) {
             returnedFromPlayer = false
             if (source != null) {
                 open(source)
             } else {
                 refresh()
             }
+        } else {
+            refresh()
         }
     }
 
@@ -80,6 +88,11 @@ class PickerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isExcludedUsbAttach(intent)) {
+            closedForExcludedUsb = true
+            finish()
+            return
+        }
         binding = ActivityPickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
         catalog = SourceCatalog(this)
@@ -90,21 +103,35 @@ class PickerActivity : AppCompatActivity() {
         UsbEvents.register(this, usbReceiver)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (closedForExcludedUsb) return
+        if (isExcludedUsbAttach(intent)) return
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            returnedFromPlayer = false
+            refresh()
+        }
+    }
+
     override fun onStart() {
         super.onStart()
+        if (closedForExcludedUsb) return
         refresh()
         handler.removeCallbacks(poll)
         handler.postDelayed(poll, POLL_MS)
     }
 
     override fun onStop() {
-        handler.removeCallbacks(poll)
-        binding.emptyArrow.clearAnimation()
+        if (!closedForExcludedUsb) {
+            handler.removeCallbacks(poll)
+            binding.emptyArrow.clearAnimation()
+        }
         super.onStop()
     }
 
     override fun onDestroy() {
-        unregisterReceiver(usbReceiver)
+        if (!closedForExcludedUsb) unregisterReceiver(usbReceiver)
         super.onDestroy()
     }
 
@@ -161,10 +188,10 @@ class PickerActivity : AppCompatActivity() {
             binding.stepTapLabel.setText(if (tapUsb) R.string.step_tap else R.string.step_tap_only)
             binding.stepPlug.isActivated = empty
             binding.stepTap.isActivated = !empty
-            renderPermission()
+            renderPermission(sources)
             if (PickerPrompt.shouldAutoStart(
                     sources = sources,
-                    permissionsGranted = missingPermissions().isEmpty(),
+                    grantedPermissions = grantedPermissions(),
                     returnedFromPlayer = returnedFromPlayer,
                     openInProgress = openInProgress,
                 )
@@ -179,24 +206,24 @@ class PickerActivity : AppCompatActivity() {
 
     private fun onSourceClicked(source: ListedSource) {
         binding.notice.visibility = View.GONE
-        val missing = missingPermissions()
+        val missing = RuntimePermissions.requiredFor(source).filterNot(::has)
         if (missing.isEmpty()) {
             returnedFromPlayer = false
             open(source)
         } else {
             pending = source
-            permissionRequest.launch(missing)
+            permissionRequest.launch(missing.toTypedArray())
         }
     }
 
     private fun open(source: ListedSource) {
         if (openInProgress) return
         openInProgress = true
-        if (source.kind == ListedSource.Kind.CAMERA2_EXTERNAL && !has(Manifest.permission.CAMERA)) {
+        if (source.kind == ListedSource.Kind.CAMERA2_EXTERNAL && !has(RuntimePermissions.CAMERA)) {
             openInProgress = false
             binding.notice.setText(R.string.camera_permission_required)
             binding.notice.visibility = View.VISIBLE
-            renderPermission()
+            renderPermission(catalog.list())
             return
         }
         val intent = Intent(this, PlayerActivity::class.java)
@@ -226,7 +253,8 @@ class PickerActivity : AppCompatActivity() {
     }
 
     private fun requestAccess() {
-        val missing = missingPermissions()
+        val sources = catalog.list()
+        val missing = missingPermissions(sources)
         val permanentlyDenied = permissionDenied && missing.any { permission ->
             !shouldShowRequestPermissionRationale(permission)
         }
@@ -237,14 +265,14 @@ class PickerActivity : AppCompatActivity() {
                 },
             )
         } else if (missing.isNotEmpty()) {
-            val only = catalog.list().singleOrNull()
+            val only = sources.singleOrNull()
             if (only?.captureCard == true) pending = only
-            permissionRequest.launch(missing)
+            permissionRequest.launch(missing.toTypedArray())
         }
     }
 
-    private fun renderPermission() {
-        val missing = missingPermissions()
+    private fun renderPermission(sources: List<ListedSource>) {
+        val missing = missingPermissions(sources)
         val show = missing.isNotEmpty()
         binding.permissionNote.visibility = if (show) View.VISIBLE else View.GONE
         binding.permissionButton.visibility = if (show) View.VISIBLE else View.GONE
@@ -257,10 +285,39 @@ class PickerActivity : AppCompatActivity() {
         )
     }
 
-    private fun missingPermissions(): Array<String> {
-        return arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+    private fun missingPermissions(sources: List<ListedSource>): List<String> {
+        return sources
+            .flatMap { RuntimePermissions.requiredFor(it) }
+            .distinct()
             .filterNot(::has)
-            .toTypedArray()
+    }
+
+    private fun grantedPermissions(): Set<String> {
+        return setOf(RuntimePermissions.CAMERA, RuntimePermissions.RECORD_AUDIO).filter(::has).toSet()
+    }
+
+    /**
+     * device_filter.xml matches every UVC class device, including the SMART
+     * webcam, because a filter cannot exclude a vendor id. Ignore that attach.
+     * If it is what launched the activity, close so the webcam does not leave
+     * DVD Player on screen.
+     */
+    private fun isExcludedUsbAttach(intent: Intent?): Boolean {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return false
+        val device = UsbEvents.device(intent) ?: return false
+        return CaptureSourceFilter.isExcludedUsb(
+            device.vendorId,
+            quietName { device.productName },
+            quietName { device.manufacturerName },
+        )
+    }
+
+    private fun quietName(read: () -> String?): String? {
+        return try {
+            read()?.takeIf { it.isNotBlank() }
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
     private fun has(permission: String): Boolean {
