@@ -1,6 +1,8 @@
 package com.hcc.dvdplayer.preview
 
 import android.hardware.usb.UsbDevice
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.hcc.dvdplayer.logic.PreviewSizeChooser
@@ -30,20 +32,34 @@ class UvcPreviewSession(
 ) {
     interface Listener {
         fun onPreviewStarted(width: Int, height: Int)
+        fun onVideoSize(width: Int, height: Int) {}
         fun onUsbPermissionDenied()
         fun onDetached()
         fun onFailed(message: String)
     }
 
     private val helper = CameraHelper()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val selected = AtomicBoolean(false)
     private var surface: Surface? = null
     private var cameraReady = false
     private var bound = false
     private var released = false
     private var attempt = 0
-    private var previewWidth = 16
-    private var previewHeight = 9
+    private var supported: List<VideoMode> = emptyList()
+    private var triedRaise = false
+    private var previewWidth = 0
+    private var previewHeight = 0
+    private var requestedWidth = PreviewSizeChooser.MAX_WIDTH
+    private var requestedHeight = PreviewSizeChooser.MAX_HEIGHT
+
+    private val sizeWatch = object : Runnable {
+        override fun run() {
+            if (released) return
+            publishActualSize()
+            mainHandler.postDelayed(this, SIZE_WATCH_MS)
+        }
+    }
 
     private val callback = object : ICameraHelper.StateCallback {
         override fun onAttach(device: UsbDevice) {
@@ -58,8 +74,11 @@ class UvcPreviewSession(
         override fun onCameraOpen(device: UsbDevice) {
             if (released || device.deviceName != targetDeviceName) return
             cameraReady = true
-            applyPreferredSize()
+            rememberSupported()
+            if (raiseIfSmaller()) return
+            publishActualSize()
             bindSurface()
+            watchSize()
         }
 
         override fun onCameraClose(device: UsbDevice) {
@@ -79,7 +98,7 @@ class UvcPreviewSession(
         override fun onError(device: UsbDevice, e: com.herohan.uvcapp.CameraException) {
             if (released || device.deviceName != targetDeviceName) return
             Log.w(TAG, "UVC error: ${e.message}")
-            if (!cameraReady && attempt <= FALLBACKS.size) {
+            if (!cameraReady && modeFor(attempt + 1) != null) {
                 attempt += 1
                 openCurrentAttempt()
             } else if (!bound) {
@@ -113,6 +132,7 @@ class UvcPreviewSession(
 
     fun release() {
         released = true
+        mainHandler.removeCallbacks(sizeWatch)
         val current = surface
         surface = null
         try {
@@ -138,35 +158,38 @@ class UvcPreviewSession(
         helper.selectDevice(device)
     }
 
+    /**
+     * UVCAndroid's no-arg [UVCParam] opens at 640x480. Ask for 1920x1080 MJPEG
+     * first, then the next supported mode if that open fails.
+     */
     private fun openCurrentAttempt() {
         if (released) return
-        val param = if (attempt == 0) {
-            UVCParam().apply { quirks = UVCCamera.UVC_QUIRK_FIX_BANDWIDTH }
-        } else {
-            val index = attempt - 1
-            if (index >= FALLBACKS.size) {
-                listener.onFailed("Could not open the USB video device")
-                return
-            }
-            val (width, height) = FALLBACKS[index]
-            val size = Size(
-                UVCCamera.UVC_VS_FRAME_MJPEG,
-                width,
-                height,
-                PreviewSizeChooser.TARGET_FPS,
-                arrayListOf(PreviewSizeChooser.TARGET_FPS),
-            )
-            UVCParam(size, UVCCamera.UVC_QUIRK_FIX_BANDWIDTH)
+        val mode = modeFor(attempt)
+        if (mode == null) {
+            listener.onFailed("Could not open the USB video device")
+            return
         }
+        requestedWidth = mode.width
+        requestedHeight = mode.height
+        Log.i(TAG, "Opening UVC ${mode.width}x${mode.height}@${mode.fps} type=${mode.type} attempt=$attempt")
         try {
-            helper.openCamera(param)
+            helper.openCamera(UVCParam(toSize(mode), UVCCamera.UVC_QUIRK_FIX_BANDWIDTH))
         } catch (error: Exception) {
             Log.e(TAG, "openCamera", error)
             listener.onFailed(error.message ?: "Could not open the USB video device")
         }
     }
 
-    private fun applyPreferredSize() {
+    private fun modeFor(index: Int): VideoMode? {
+        val modes = if (supported.isNotEmpty()) {
+            PreviewSizeChooser.ranked(supported)
+        } else {
+            DEFAULT_OPENS
+        }
+        return modes.getOrNull(index)
+    }
+
+    private fun rememberSupported() {
         val reported = (helper.supportedSizeList ?: emptyList()).map { size ->
             VideoMode(
                 type = size.type,
@@ -176,17 +199,73 @@ class UvcPreviewSession(
                 fpsOptions = size.fpsList ?: emptyList(),
             )
         }
-        val chosen = PreviewSizeChooser.choose(reported) ?: return
-        previewWidth = chosen.width
-        previewHeight = chosen.height
-        val fpsList = ArrayList<Int>(chosen.fpsOptions.size.coerceAtLeast(1))
-        if (chosen.fpsOptions.isEmpty()) fpsList += chosen.fps else fpsList += chosen.fpsOptions
+        if (reported.isNotEmpty()) supported = reported
+    }
+
+    /**
+     * The device can ignore the requested size and stay at 640x480. Move up to
+     * the best listed mode. A failed [CameraHelper.setPreviewSize] destroys the
+     * camera inside the library, so a closed camera starts the next mode.
+     */
+    private fun raiseIfSmaller(): Boolean {
+        if (triedRaise) return false
+        val best = PreviewSizeChooser.choose(supported) ?: return false
+        val actual = currentPreviewSize()
+        if (actual != null && actual.first == best.width && actual.second == best.height) return false
+        Log.i(TAG, "Raising preview from ${actual?.first ?: 0}x${actual?.second ?: 0} to ${best.width}x${best.height}")
+        triedRaise = true
         try {
-            helper.previewSize = Size(chosen.type, chosen.width, chosen.height, chosen.fps, fpsList)
-            Log.i(TAG, "UVC preview ${chosen.width}x${chosen.height}@${chosen.fps} type=${chosen.type}")
+            helper.previewSize = toSize(best)
         } catch (error: Exception) {
-            Log.w(TAG, "setPreviewSize fell back to the device default", error)
+            Log.w(TAG, "setPreviewSize", error)
         }
+        if (cameraStillOpen()) return false
+        Log.w(TAG, "Preview size change closed the camera")
+        cameraReady = false
+        bound = false
+        attempt += 1
+        openCurrentAttempt()
+        return true
+    }
+
+    private fun publishActualSize() {
+        val actual = currentPreviewSize() ?: return
+        if (actual.first == previewWidth && actual.second == previewHeight) return
+        previewWidth = actual.first
+        previewHeight = actual.second
+        Log.i(TAG, "UVC frame ${previewWidth}x${previewHeight}")
+        mainHandler.post {
+            if (!released) listener.onVideoSize(previewWidth, previewHeight)
+        }
+    }
+
+    private fun currentPreviewSize(): Pair<Int, Int>? {
+        val size = try {
+            helper.previewSize
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        if (size.width <= 0 || size.height <= 0) return null
+        return size.width to size.height
+    }
+
+    private fun cameraStillOpen(): Boolean {
+        return try {
+            helper.isCameraOpened
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun watchSize() {
+        mainHandler.removeCallbacks(sizeWatch)
+        mainHandler.post(sizeWatch)
+    }
+
+    private fun toSize(mode: VideoMode): Size {
+        val fpsList = ArrayList<Int>(mode.fpsOptions.size.coerceAtLeast(1))
+        if (mode.fpsOptions.isEmpty()) fpsList += mode.fps else fpsList += mode.fpsOptions
+        return Size(mode.type, mode.width, mode.height, mode.fps, fpsList)
     }
 
     private fun bindSurface() {
@@ -195,16 +274,21 @@ class UvcPreviewSession(
         bound = true
         helper.addSurface(target, false)
         helper.startPreview()
-        listener.onPreviewStarted(previewWidth, previewHeight)
+        val width = if (previewWidth > 0) previewWidth else requestedWidth
+        val height = if (previewHeight > 0) previewHeight else requestedHeight
+        listener.onPreviewStarted(width, height)
     }
 
     companion object {
         private const val TAG = "HdmiIn"
-        private val FALLBACKS = listOf(
-            1920 to 1080,
-            1280 to 720,
-            640 to 480,
-            720 to 480,
+        private const val SIZE_WATCH_MS = 1_000L
+
+        /** Used until the device has listed its modes. Highest first, never the library's 640x480 default. */
+        private val DEFAULT_OPENS = listOf(
+            VideoMode(PreviewSizeChooser.MJPEG_FRAME, 1920, 1080, PreviewSizeChooser.TARGET_FPS),
+            VideoMode(PreviewSizeChooser.MJPEG_FRAME, 1280, 720, PreviewSizeChooser.TARGET_FPS),
+            VideoMode(PreviewSizeChooser.MJPEG_FRAME, 720, 480, PreviewSizeChooser.TARGET_FPS),
+            VideoMode(PreviewSizeChooser.MJPEG_FRAME, 640, 480, PreviewSizeChooser.TARGET_FPS),
         )
     }
 }

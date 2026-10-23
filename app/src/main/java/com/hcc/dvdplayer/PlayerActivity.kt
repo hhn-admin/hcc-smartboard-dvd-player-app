@@ -7,7 +7,9 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.GestureDetector
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.View
 import android.view.WindowManager
@@ -39,6 +41,9 @@ class PlayerActivity : AppCompatActivity() {
     private var pendingSyncDelay = AudioFormatPlanner.UVC_SYNC_DELAY_MS
     private var leaving = false
     private var resolution: String? = null
+    private var videoWidth = 0
+    private var videoHeight = 0
+    private var zoomFill = false
     private var audioMessage: String? = null
     private var audioSticky = false
 
@@ -48,6 +53,27 @@ class PlayerActivity : AppCompatActivity() {
     private val hideStatus = Runnable {
         if (!audioSticky) binding.status.visibility = View.GONE
     }
+
+    private val pictureGestures = GestureDetector(
+        this,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                showChrome()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                toggleZoom()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                toggleDiagnostics()
+            }
+        },
+    )
 
     private val recordAudioRequest = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -81,13 +107,15 @@ class PlayerActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enterImmersive()
         binding.backButton.setOnClickListener { finishWithNotice(null) }
+        binding.zoomButton.setOnClickListener { toggleZoom() }
         binding.playerRoot.setOnClickListener { showChrome() }
-        binding.preview.setOnClickListener { showChrome() }
-        binding.status.setOnLongClickListener {
-            toggleDiagnostics()
+        val pictureTouch = View.OnTouchListener { _, event ->
+            pictureGestures.onTouchEvent(event)
             true
         }
-        binding.preview.setOnLongClickListener {
+        binding.videoFrame.setOnTouchListener(pictureTouch)
+        binding.preview.setOnTouchListener(pictureTouch)
+        binding.status.setOnLongClickListener {
             toggleDiagnostics()
             true
         }
@@ -164,12 +192,16 @@ class PlayerActivity : AppCompatActivity() {
         uvc = UvcPreviewSession(deviceName, object : UvcPreviewSession.Listener {
             override fun onPreviewStarted(width: Int, height: Int) {
                 if (leaving) return
-                binding.videoFrame.setAspect(width, height)
-                resolution = getString(R.string.resolution_fmt, width, height)
+                applyVideoSize(width, height)
                 audioSticky = false
                 renderStatus()
                 scheduleStatusHide()
                 startAudio(AudioFormatPlanner.UVC_SYNC_DELAY_MS)
+            }
+
+            override fun onVideoSize(width: Int, height: Int) {
+                if (leaving) return
+                applyVideoSize(width, height)
             }
 
             override fun onUsbPermissionDenied() {
@@ -198,13 +230,12 @@ class PlayerActivity : AppCompatActivity() {
         }
         val session = Camera2PreviewSession(this, cameraId, object : Camera2PreviewSession.Listener {
             override fun onAspectKnown(width: Int, height: Int) {
-                binding.videoFrame.setAspect(width, height)
+                applyVideoSize(width, height)
             }
 
             override fun onPreviewStarted(width: Int, height: Int) {
                 if (leaving) return
-                binding.videoFrame.setAspect(width, height)
-                resolution = getString(R.string.resolution_fmt, width, height)
+                applyVideoSize(width, height)
                 audioSticky = false
                 renderStatus()
                 scheduleStatusHide()
@@ -220,7 +251,7 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
         camera2 = session
-        binding.videoFrame.setAspect(session.previewWidth, session.previewHeight)
+        applyVideoSize(session.previewWidth, session.previewHeight)
         binding.preview.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) = Unit
 
@@ -300,6 +331,38 @@ class PlayerActivity : AppCompatActivity() {
         renderStatus()
     }
 
+    private fun applyVideoSize(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        val changed = width != videoWidth || height != videoHeight
+        videoWidth = width
+        videoHeight = height
+        binding.videoFrame.setAspect(width, height)
+        resolution = getString(R.string.resolution_fmt, width, height)
+        if (changed && !audioSticky) {
+            renderStatus()
+            scheduleStatusHide()
+        }
+    }
+
+    private fun toggleZoom() {
+        zoomFill = !zoomFill
+        binding.videoFrame.setCropToFill(zoomFill)
+        binding.zoomButton.setText(if (zoomFill) R.string.fit_screen else R.string.zoom_to_fill)
+        if (!audioSticky) {
+            val fit = getString(if (zoomFill) R.string.zoom_on else R.string.zoom_off)
+            binding.status.text = listOfNotNull(resolution, fit).joinToString(" · ")
+            binding.status.visibility = View.VISIBLE
+            scheduleStatusHide()
+        }
+        showChrome()
+    }
+
+    private fun pictureDescription(): String {
+        if (videoWidth <= 0 || videoHeight <= 0) return "not started"
+        val fit = if (zoomFill) "zoom to fill" else "fit"
+        return "${videoWidth}x${videoHeight}, $fit"
+    }
+
     private fun renderStatus() {
         val text = listOfNotNull(resolution, audioMessage).filter { it.isNotBlank() }.joinToString(" · ")
         binding.status.text = text
@@ -322,6 +385,7 @@ class PlayerActivity : AppCompatActivity() {
                 playingDeviceName = intentUsbName(),
                 productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
                 directUsb = audio?.directUsbNote() ?: "not started",
+                picture = pictureDescription(),
             )
         } catch (error: Exception) {
             "Diagnostics failed: ${error.message ?: error.javaClass.simpleName}"

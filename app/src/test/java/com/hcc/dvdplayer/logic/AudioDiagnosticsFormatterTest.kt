@@ -11,6 +11,7 @@ class AudioDiagnosticsFormatterTest {
             playingDeviceName = "/dev/bus/usb/001/005",
             productHint = "MACROSILICON",
             directUsb = "waiting for a USB input",
+            picture = "1920x1080, fit",
             devices = listOf(
                 AudioDiagnosticsFormatter.UsbDeviceLine(
                     vendorId = 0x0B8C,
@@ -76,5 +77,6 @@ class AudioDiagnosticsFormatterTest {
         assertTrue(text.contains("use: generic USB audio from the capture card"))
         assertTrue(text.contains("blocked: not a USB input"))
         assertTrue(text.contains("waiting for a USB input"))
+        assertTrue(text.contains("Picture: 1920x1080, fit"))
     }
 }

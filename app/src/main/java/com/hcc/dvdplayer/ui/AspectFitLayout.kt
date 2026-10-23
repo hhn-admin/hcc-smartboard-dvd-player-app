@@ -6,8 +6,11 @@ import android.widget.FrameLayout
 import com.hcc.dvdplayer.logic.PreviewSizeChooser
 
 /**
- * Sizes its single child to the video aspect ratio and centers it, so a 16:9
- * HDMI frame is not stretched on a 16:10 panel.
+ * Sizes its single child to the video aspect and centers it in the full screen.
+ *
+ * The child is measured from the screen, not from the capture's pixel size, so
+ * a 640x480 frame scales up until it touches an edge. [setCropToFill] covers
+ * the screen and lets the extra hang off the edges. Neither mode stretches.
  */
 class AspectFitLayout @JvmOverloads constructor(
     context: Context,
@@ -15,6 +18,7 @@ class AspectFitLayout @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
     private var aspectWidth = 16
     private var aspectHeight = 9
+    private var cropToFill = false
 
     fun setAspect(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
@@ -24,12 +28,24 @@ class AspectFitLayout @JvmOverloads constructor(
         requestLayout()
     }
 
+    fun setCropToFill(crop: Boolean) {
+        if (crop == cropToFill) return
+        cropToFill = crop
+        requestLayout()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val height = MeasureSpec.getSize(heightMeasureSpec)
         setMeasuredDimension(width, height)
         val child = getChildAt(0) ?: return
-        val (childWidth, childHeight) = PreviewSizeChooser.fitInside(width, height, aspectWidth, aspectHeight)
+        val (childWidth, childHeight) = PreviewSizeChooser.frameSize(
+            width,
+            height,
+            aspectWidth,
+            aspectHeight,
+            crop = cropToFill,
+        )
         child.measure(
             MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),

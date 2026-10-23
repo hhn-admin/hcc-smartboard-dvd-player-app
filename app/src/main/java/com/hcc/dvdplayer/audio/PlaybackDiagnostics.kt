@@ -23,6 +23,7 @@ class PlaybackDiagnostics(context: Context) {
         playingDeviceName: String?,
         productHint: String?,
         directUsb: String,
+        picture: String,
     ): String {
         val usbDevices = connectedUsbDevices()
         val identities = usbDevices.map { device ->
@@ -74,6 +75,7 @@ class PlaybackDiagnostics(context: Context) {
             directUsb = directUsb,
             devices = devices,
             inputs = inputs,
+            picture = picture,
         )
     }
 

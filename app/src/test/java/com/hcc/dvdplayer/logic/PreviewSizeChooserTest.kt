@@ -63,4 +63,26 @@ class PreviewSizeChooserTest {
         assertEquals(1000 to 562, PreviewSizeChooser.fitInside(1000, 1000, 16, 9))
         assertEquals(750 to 1000, PreviewSizeChooser.fitInside(1000, 1000, 3, 4))
     }
+
+    @Test
+    fun smallFramesScaleUpToTheScreenInsteadOfStayingAtNativePixels() {
+        assertEquals(3840 to 2160, PreviewSizeChooser.fitInside(3840, 2160, 1920, 1080))
+        assertEquals(2880 to 2160, PreviewSizeChooser.fitInside(3840, 2160, 640, 480))
+        assertEquals(3840 to 2880, PreviewSizeChooser.cover(3840, 2160, 640, 480))
+        assertEquals(1620 to 1080, PreviewSizeChooser.fitInside(1920, 1080, 720, 480))
+    }
+
+    @Test
+    fun rankedModesPrefer1080pMjpegThenSmallerThenOversize() {
+        val ranked = PreviewSizeChooser.ranked(
+            listOf(
+                VideoMode(type = PreviewSizeChooser.MJPEG_FRAME, width = 640, height = 480, fps = 30),
+                VideoMode(type = PreviewSizeChooser.MJPEG_FRAME, width = 3840, height = 2160, fps = 30),
+                VideoMode(type = PreviewSizeChooser.MJPEG_FRAME, width = 1280, height = 720, fps = 30),
+                VideoMode(type = PreviewSizeChooser.MJPEG_FRAME, width = 1920, height = 1080, fps = 30),
+                VideoMode(type = 5, width = 1920, height = 1080, fps = 30),
+            ),
+        )
+        assertEquals(listOf(1920 to 1080, 1280 to 720, 640 to 480, 3840 to 2160), ranked.map { it.width to it.height })
+    }
 }
