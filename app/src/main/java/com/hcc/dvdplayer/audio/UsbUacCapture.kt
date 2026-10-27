@@ -8,6 +8,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.util.Log
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
+import com.hcc.dvdplayer.logic.ExclusionPolicy
 import com.hcc.dvdplayer.logic.UacDescriptorParser
 
 /**
@@ -21,6 +22,7 @@ import com.hcc.dvdplayer.logic.UacDescriptorParser
 internal class UsbUacCapture(
     context: Context,
     private val deviceName: String,
+    private val policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
 ) {
     class Session(
         val sampleRate: Int,
@@ -58,7 +60,13 @@ internal class UsbUacCapture(
     fun open(): Session? {
         val manager = appContext.getSystemService(UsbManager::class.java) ?: return null
         val device = manager.deviceList.values.firstOrNull { it.deviceName == deviceName } ?: return null
-        if (CaptureSourceFilter.isExcludedUsb(device.vendorId, quiet { device.productName }, quiet { device.manufacturerName })) {
+        if (CaptureSourceFilter.isExcludedUsb(
+                device.vendorId,
+                quiet { device.productName },
+                quiet { device.manufacturerName },
+                policy = policy,
+            )
+        ) {
             Log.w(TAG, "refusing USB audio on an excluded device ${device.deviceName}")
             return null
         }

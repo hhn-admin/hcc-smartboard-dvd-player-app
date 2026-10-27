@@ -60,13 +60,22 @@ object CaptureSourceFilter {
         val detail: String,
     )
 
-    fun isExcludedUsb(vendorId: Int, vararg names: String?): Boolean {
+    fun isExcludedUsb(
+        vendorId: Int,
+        vararg names: String?,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
+    ): Boolean {
+        if (vendorId in policy.extraVendorIds) return true
+        if (!policy.excludeSmartDevices) return false
         if (vendorId == SMART_VENDOR_ID) return true
         return names.any { matchesExcludedName(it) }
     }
 
-    fun looksLikeCaptureCard(vararg names: String?): Boolean {
-        if (names.any { matchesExcludedName(it) }) return false
+    fun looksLikeCaptureCard(
+        vararg names: String?,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
+    ): Boolean {
+        if (policy.excludeSmartDevices && names.any { matchesExcludedName(it) }) return false
         return names.any { matchesCaptureName(it) }
     }
 
@@ -79,12 +88,13 @@ object CaptureSourceFilter {
         vendorId: (T) -> Int,
         productName: (T) -> String?,
         manufacturerName: (T) -> String?,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): List<T> {
         val allowed = devices.filter { device ->
-            !isExcludedUsb(vendorId(device), productName(device), manufacturerName(device))
+            !isExcludedUsb(vendorId(device), productName(device), manufacturerName(device), policy = policy)
         }
         val captures = allowed.filter { device ->
-            looksLikeCaptureCard(productName(device), manufacturerName(device))
+            looksLikeCaptureCard(productName(device), manufacturerName(device), policy = policy)
         }
         return if (captures.isNotEmpty()) captures else allowed
     }
@@ -94,10 +104,13 @@ object CaptureSourceFilter {
      * itself looks like a capture card. The SMART webcam and built-in cameras
      * do not.
      */
-    fun allowCamera2(labels: List<String?>, listedUsbCount: Int): Boolean {
+    fun allowCamera2(
+        labels: List<String?>,
+        listedUsbCount: Int,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
+    ): Boolean {
         if (listedUsbCount > 0) return false
-        if (labels.any { matchesExcludedName(it) }) return false
-        return looksLikeCaptureCard(*labels.toTypedArray())
+        return looksLikeCaptureCard(*labels.toTypedArray(), policy = policy)
     }
 
     fun selectAudioInputIndexes(
@@ -105,9 +118,10 @@ object CaptureSourceFilter {
         productHint: String?,
         usbDevices: List<UsbIdentity>,
         playingDeviceName: String? = null,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): List<Int> {
         val allowed = inputs.indices.filter { index ->
-            chooseAudio(inputs[index], usbDevices, productHint, playingDeviceName).use
+            chooseAudio(inputs[index], usbDevices, productHint, playingDeviceName, policy).use
         }
         val hint = productHint?.trim().orEmpty()
         if (hint.isEmpty()) return allowed
@@ -131,21 +145,24 @@ object CaptureSourceFilter {
         usbDevices: List<UsbIdentity>,
         productHint: String? = null,
         playingDeviceName: String? = null,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): AudioChoice {
-        if (matchesExcludedName(input.productName)) {
+        if (policy.excludeSmartDevices && matchesExcludedName(input.productName)) {
             return AudioChoice(false, "excluded name")
         }
         val blockedDevices = usbDevices.filter { device ->
-            isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
+            isExcludedUsb(device.vendorId, device.productName, device.manufacturerName, policy = policy)
         }
         if (blockedDevices.any { device -> tied(input, device) }) {
             return AudioChoice(false, "matches the SMART webcam")
         }
-        if (usbDevices.none { it.vendorId == SMART_VENDOR_ID }) {
+        val smartPresent = policy.excludeSmartDevices && usbDevices.any { it.vendorId == SMART_VENDOR_ID }
+        val extraPresent = usbDevices.any { it.vendorId in policy.extraVendorIds }
+        if (!smartPresent && !extraPresent) {
             return AudioChoice(true, "no SMART webcam on USB")
         }
         val captures = usbDevices.filter { device ->
-            !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
+            !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName, policy = policy)
         }
         val hint = productHint?.trim().orEmpty()
         if (hint.length >= 4 && input.productName?.contains(hint, ignoreCase = true) == true) {
@@ -176,8 +193,9 @@ object CaptureSourceFilter {
         usbDevices: List<UsbIdentity>,
         productHint: String? = null,
         playingDeviceName: String? = null,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): String {
-        val choice = chooseAudio(input, usbDevices, productHint, playingDeviceName)
+        val choice = chooseAudio(input, usbDevices, productHint, playingDeviceName, policy)
         return if (choice.use) "use: ${choice.detail}" else "blocked: ${choice.detail}"
     }
 
@@ -186,8 +204,9 @@ object CaptureSourceFilter {
         usbDevices: List<UsbIdentity>,
         productHint: String? = null,
         playingDeviceName: String? = null,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): Boolean {
-        return !chooseAudio(input, usbDevices, productHint, playingDeviceName).use
+        return !chooseAudio(input, usbDevices, productHint, playingDeviceName, policy).use
     }
 
     /**
@@ -195,18 +214,22 @@ object CaptureSourceFilter {
      * Prefers the device that is already playing video, and otherwise the only
      * non-SMART device that actually has a UAC interface.
      */
-    fun directUsbDeviceName(playingDeviceName: String?, usbDevices: List<UsbIdentity>): String? {
+    fun directUsbDeviceName(
+        playingDeviceName: String?,
+        usbDevices: List<UsbIdentity>,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
+    ): String? {
         val playing = usbDevices.firstOrNull { it.deviceName == playingDeviceName }
         if (playing != null &&
             playing.hasAudioInterface &&
-            !isExcludedUsb(playing.vendorId, playing.productName, playing.manufacturerName)
+            !isExcludedUsb(playing.vendorId, playing.productName, playing.manufacturerName, policy = policy)
         ) {
             return playing.deviceName
         }
         if (playingDeviceName.isNullOrBlank()) return null
         val others = usbDevices.filter { device ->
             device.hasAudioInterface &&
-                !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName)
+                !isExcludedUsb(device.vendorId, device.productName, device.manufacturerName, policy = policy)
         }
         return if (others.size == 1) others[0].deviceName else null
     }

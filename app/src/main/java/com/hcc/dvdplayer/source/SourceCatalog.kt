@@ -7,6 +7,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
+import com.hcc.dvdplayer.logic.ExclusionPolicy
 import com.hcc.dvdplayer.logic.SourceLabels
 import com.hcc.dvdplayer.logic.UsbVideoFilter
 
@@ -18,11 +19,13 @@ data class ListedSource(
     val cameraId: String?,
     val audioHint: String?,
     val captureCard: Boolean = false,
+    val vendorId: Int = 0,
+    val productId: Int = 0,
 ) {
     enum class Kind { USB_UVC, CAMERA2_EXTERNAL }
 
     fun signature(): String {
-        return "$kind:${usbDeviceName.orEmpty()}:${cameraId.orEmpty()}:$title:$subtitle"
+        return "$kind:${usbDeviceName.orEmpty()}:${cameraId.orEmpty()}:$vendorId:$productId:$title:$subtitle"
     }
 }
 
@@ -33,10 +36,10 @@ class SourceCatalog(context: Context) {
 
     fun usbHostAvailable(): Boolean = usbManager != null
 
-    fun list(): List<ListedSource> {
-        val usb = usbSources()
+    fun list(policy: ExclusionPolicy = ExclusionPolicy.DEFAULT): List<ListedSource> {
+        val usb = usbSources(policy)
         if (usb.isNotEmpty()) return usb
-        return cameraSources()
+        return cameraSources(policy)
     }
 
     fun findUsbDevice(deviceName: String): UsbDevice? {
@@ -44,7 +47,7 @@ class SourceCatalog(context: Context) {
         return manager.deviceList.values.firstOrNull { it.deviceName == deviceName }
     }
 
-    private fun usbSources(): List<ListedSource> {
+    private fun usbSources(policy: ExclusionPolicy): List<ListedSource> {
         val manager = usbManager ?: return emptyList()
         val rows = manager.deviceList.values.mapNotNull { device ->
             if (!UsbVideoFilter.matches(device.deviceClass, device.deviceSubclass, interfacesOf(device))) {
@@ -61,6 +64,7 @@ class SourceCatalog(context: Context) {
             vendorId = { it.device.vendorId },
             productName = { it.product },
             manufacturerName = { it.manufacturer },
+            policy = policy,
         ).sortedWith(compareBy({ it.device.vendorId }, { it.device.productId }, { it.device.deviceName }))
             .map { row ->
                 ListedSource(
@@ -70,12 +74,18 @@ class SourceCatalog(context: Context) {
                     usbDeviceName = row.device.deviceName,
                     cameraId = null,
                     audioHint = row.product ?: row.manufacturer,
-                    captureCard = CaptureSourceFilter.looksLikeCaptureCard(row.product, row.manufacturer),
+                    captureCard = CaptureSourceFilter.looksLikeCaptureCard(
+                        row.product,
+                        row.manufacturer,
+                        policy = policy,
+                    ),
+                    vendorId = row.device.vendorId,
+                    productId = row.device.productId,
                 )
             }
     }
 
-    private fun cameraSources(): List<ListedSource> {
+    private fun cameraSources(policy: ExclusionPolicy): List<ListedSource> {
         val manager = cameraManager ?: return emptyList()
         val ids = try {
             manager.cameraIdList
@@ -90,7 +100,7 @@ class SourceCatalog(context: Context) {
             }
             if (!isExternal(characteristics)) return@mapNotNull null
             val labels = listOf(id)
-            if (!CaptureSourceFilter.allowCamera2(labels, listedUsbCount = 0)) return@mapNotNull null
+            if (!CaptureSourceFilter.allowCamera2(labels, listedUsbCount = 0, policy = policy)) return@mapNotNull null
             ListedSource(
                 kind = ListedSource.Kind.CAMERA2_EXTERNAL,
                 title = SourceLabels.cameraTitle(id),

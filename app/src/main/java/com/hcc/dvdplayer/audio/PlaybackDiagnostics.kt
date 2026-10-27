@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.os.Build
 import com.hcc.dvdplayer.logic.AudioDiagnosticsFormatter
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
+import com.hcc.dvdplayer.logic.ExclusionPolicy
 
 /**
  * Collects the USB and audio-input snapshot shown when the status line is
@@ -24,6 +25,7 @@ class PlaybackDiagnostics(context: Context) {
         productHint: String?,
         directUsb: String,
         picture: String,
+        policy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     ): String {
         val usbDevices = connectedUsbDevices()
         val identities = usbDevices.map { device ->
@@ -43,7 +45,13 @@ class PlaybackDiagnostics(context: Context) {
                 address = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.address else null,
             )
             val decision = if (AudioLoopback.isUsbInput(info.type)) {
-                CaptureSourceFilter.audioDecision(identity, identities, productHint, playingDeviceName)
+                CaptureSourceFilter.audioDecision(
+                    identity,
+                    identities,
+                    productHint,
+                    playingDeviceName,
+                    policy,
+                )
             } else {
                 "blocked: not a USB input"
             }

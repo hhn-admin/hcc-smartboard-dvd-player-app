@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_auto_start_desc"
+        android:key="auto_start"
+        android:restrictionType="bool"
+        android:title="@string/restrict_auto_start_title" />
+
+    <restriction
+        android:defaultValue="false"
+        android:description="@string/restrict_zoom_desc"
+        android:key="zoom_to_fill_default"
+        android:restrictionType="bool"
+        android:title="@string/restrict_zoom_title" />
+
+    <restriction
+        android:defaultValue="false"
+        android:description="@string/restrict_lock_desc"
+        android:key="lock_controls"
+        android:restrictionType="bool"
+        android:title="@string/restrict_lock_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_meter_desc"
+        android:key="show_audio_meter"
+        android:restrictionType="bool"
+        android:title="@string/restrict_meter_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_snapshot_desc"
+        android:key="enable_snapshot"
+        android:restrictionType="bool"
+        android:title="@string/restrict_snapshot_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_freeze_desc"
+        android:key="enable_freeze"
+        android:restrictionType="bool"
+        android:title="@string/restrict_freeze_title" />
+
+    <restriction
+        android:defaultValue="4"
+        android:description="@string/restrict_autohide_desc"
+        android:key="controls_autohide_seconds"
+        android:restrictionType="integer"
+        android:title="@string/restrict_autohide_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_exclude_smart_desc"
+        android:key="exclude_smart_devices"
+        android:restrictionType="bool"
+        android:title="@string/restrict_exclude_smart_title" />
+
+    <restriction
+        android:defaultValue=""
+        android:description="@string/restrict_extra_vids_desc"
+        android:key="extra_excluded_vids"
+        android:restrictionType="string"
+        android:title="@string/restrict_extra_vids_title" />
+</restrictions>
