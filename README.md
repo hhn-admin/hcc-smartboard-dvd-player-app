@@ -2,7 +2,7 @@
 
 Full-screen live view of a USB HDMI capture card on an Android tablet or smart board. Plug a DVD player (or any other HDMI source) into the DVD capture card, plug that card into the board, and the picture fills the screen. Sound from the card's USB audio plays through the board's normal media output.
 
-The app does not use Google Play services. It is meant to be sideloaded or installed by an MDM. Teachers do not configure it. Version 1.1 remembers the capture card, hides the buttons while a disc is playing, and adds freeze and snapshot for the board's ink tools.
+The app does not use Google Play services. It is meant to be sideloaded or installed by an MDM. Teachers do not configure it. Version 1.1 remembers the capture card, hides the buttons while a disc is playing, and adds freeze and snapshot for the board's ink tools. Version 1.2 adds picture-in-picture, so the DVD can sit in a small window while the whiteboard or another app is in front, with the sound still playing.
 
 ## What you do
 
@@ -14,7 +14,8 @@ The app does not use Google Play services. It is meant to be sideloaded or insta
 6. **Freeze** holds the current picture on screen. The DVD and the sound keep going underneath. The screen says **FROZEN - tap to go live**. Tap that line, or **Live**, to see the picture again.
 7. **Snapshot** saves the current frame (the frozen one, if the picture is held) as a PNG in `Pictures/DVD Player`. A thumbnail and the line "Snapshot saved to Pictures/DVD Player" confirm it. Open that picture in the board's ink tools. On Android 9 and older the app asks once for storage access so the file can land in the shared Pictures folder. If that is denied, the file is kept in the app's own pictures folder instead.
 8. A small bar in the bottom-right corner moves when the capture card's sound is coming through. If it stays empty, the sound did not open. A black picture for a few seconds after the card opens is replaced with "No signal - make sure the DVD player is turned on and the HDMI cable is connected".
-9. Hold a finger on the picture for 3 seconds to lock the controls. Change source and Zoom hide, so a student cannot switch away. Freeze and Snapshot stay. Hold for 3 seconds again to unlock. An MDM can lock this so the hold does not unlock it. See [Managed settings](#managed-settings).
+9. Hold a finger on the picture for 3 seconds to lock the controls. Change source and Zoom hide, so a student cannot switch away. Freeze, Snapshot, and Picture-in-picture stay. Hold for 3 seconds again to unlock. An MDM can lock this so the hold does not unlock it. See [Managed settings](#managed-settings).
+10. **Picture-in-picture** shrinks the DVD into a floating window. Press Home, open the SMART whiteboard, or tap the button. The picture and the sound keep going. The buttons, the status line, and the audio meter hide; a small "No signal" line can still appear. The window's own controls freeze or mute. Tap the DVD Player icon to open the picture full screen again. Closing the floating window stops the capture and the sound.
 
 ## How video is opened
 
@@ -67,21 +68,25 @@ The keys are declared in `res/xml/app_restrictions.xml`. The manifest points at 
 
 ### Set them from SMART or another MDM
 
-1. Upload the signed `dvd-player-1.1.0-release.apk` as an update to the existing app `com.hcc.dvdplayer`. Do not create a second package.
-2. In the MDM, open that app's configuration. SMART MDM and other Android Enterprise consoles call this **Managed configuration**, **Application configuration**, or **App restrictions**. The nine keys below should appear from the APK. If the console has no form, push a managed-configuration bundle that uses these exact key names.
+1. Upload the signed `dvd-player-1.2.0-release.apk` as an update to the existing app `com.hcc.dvdplayer`. Do not create a second package.
+2. In the MDM, open that app's configuration. SMART MDM and other Android Enterprise consoles call this **Managed configuration**, **Application configuration**, or **App restrictions**. The keys below should appear from the APK. If the console has no form, which is common in SMART Remote Management, the defaults are what the board uses. A console that can push a raw bundle should use these exact key names.
 3. Save and sync the board. The player and the source list pick up the new values on the restrictions broadcast, and again the next time that screen is shown. There is nothing for the teacher to turn on inside the app.
 
 | Key | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `auto_start` | bool | `true` | Start the last successful source when it is plugged in. If nothing was remembered, start when exactly one capture card is connected. `false` always waits on the list. |
 | `zoom_to_fill_default` | bool | `false` | Start cropped to the screen. `false` fits the whole frame. A teacher can still tap twice to switch, unless controls are locked. |
-| `lock_controls` | bool | `false` | Hide **Change source** and **Zoom**, and ignore the 3-second hold. Freeze and Snapshot stay if they are enabled. Back does not leave the picture. When this key is present, the board cannot override it. |
+| `lock_controls` | bool | `false` | Hide **Change source** and **Zoom**, and ignore the 3-second hold. Freeze, Snapshot, and Picture-in-picture stay if they are enabled. Back does not leave the picture. When this key is present, the board cannot override it. |
 | `show_audio_meter` | bool | `true` | The corner bar that moves with the capture card's sound. |
 | `enable_snapshot` | bool | `true` | Show **Snapshot**. `false` hides it, including while controls are locked. |
 | `enable_freeze` | bool | `true` | Show **Freeze**. `false` hides it and drops a freeze that was already up. |
 | `controls_autohide_seconds` | integer | `4` | How long the top buttons stay after a tap. Values outside 1–60 are clamped. |
 | `exclude_smart_devices` | bool | `true` | Hide USB vendor `0x0B8C` and SMART / webcam names from the list and from audio. Leave this on. `false` lets that webcam be listed. |
 | `extra_excluded_vids` | string | empty | More USB vendor ids to hide, comma-separated hex, `0x` optional. Example: `0x1234,534D`. Empty hides nothing extra. These are hidden even when `exclude_smart_devices` is on. |
+| `enable_pip` | bool | `true` | Allow picture-in-picture and show the button, including while controls are locked. `false` hides the button and will not shrink the window when you leave. |
+| `auto_pip_on_leave` | bool | `true` | Home, the SMART launcher, or another app shrinks the DVD into the floating window. `false` keeps the button but leaves the picture only when someone taps it. |
+
+SMART Remote Management and some other consoles do not show Android managed configurations at all. When nothing is pushed, every key above uses its default. Picture-in-picture and auto-shrink are on unless a bundle says otherwise, so a teacher does not have to set them up.
 
 `exclude_smart_devices` does not remove the SMART webcam from Android's USB attach chooser. A device filter cannot exclude a vendor id. The app still ignores that attach while this key is true.
 
@@ -103,7 +108,7 @@ export ANDROID_HOME="$HOME/android-sdk"   # or wherever the SDK lives
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/dvd-player-1.1.0-debug.apk`.
+The debug APK is `app/build/outputs/apk/debug/dvd-player-1.2.0-debug.apk`.
 
 `minSdk` is 24 (Android 7.0). `targetSdk` and `compileSdk` are 35. The landscape layout is sized for a board: large type, large rows, D-pad focus.
 
@@ -186,30 +191,30 @@ export ANDROID_KEY_PASSWORD='key-password'
 ./gradlew assembleRelease
 ```
 
-The signed file is `app/build/outputs/apk/release/dvd-player-1.1.0-release.apk` (the version in the name follows `hdmiVersionName`).
+The signed file is `app/build/outputs/apk/release/dvd-player-1.2.0-release.apk` (the version in the name follows `hdmiVersionName`).
 
 ### When the workflow publishes
 
 `.github/workflows/release-apk.yml` runs on pull requests, on pushes to `main`, and on tags `vX.Y.Z` such as `v1.0.0`.
 
 - Pull requests and `main` pushes upload `dvd-player-release` only when the four secrets are set.
-- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.1.1` with `hdmiVersionName = "1.1.0"` fails the job.
+- A tag `vX.Y.Z` must match `hdmiVersionName` in `app/build.gradle.kts`. `v1.2.1` with `hdmiVersionName = "1.2.0"` fails the job.
 - On a matching tag, and only when the APK was signed, the workflow also creates or updates a GitHub Release and attaches that APK.
 
 ### Bump a version for an MDM update
 
 MDM treats a build as an update only when `applicationId` is unchanged, the signing certificate is the same keystore, and `versionCode` is an integer greater than the one already installed.
 
-1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.1.1`, `1.2.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
+1. In `app/build.gradle.kts`, increase `hdmiVersionCode` by at least 1 and set `hdmiVersionName` to the new version (`1.2.1`, `1.3.0`, …). Leave `applicationId` as `com.hcc.dvdplayer`.
 2. Merge that change to `main`.
 3. Tag the merge commit and push the tag:
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.2.1
+git push origin v1.2.1
 ```
 
-4. Download `dvd-player-1.1.1-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
+4. Download `dvd-player-1.2.1-release.apk` from the Actions artifact `dvd-player-release`, or from the GitHub Release attached to that tag.
 5. Upload that APK in Smart MDM as an update to the existing DVD Player app. Do not create a second app entry with a different package name, and do not switch keystores.
 
 ## Sideload onto a smart board
@@ -220,7 +225,7 @@ Boards usually have no Play Store. Any of these work:
 
 ```bash
 adb connect BOARD_IP:5555
-adb install -r dvd-player-1.1.0-debug.apk
+adb install -r dvd-player-1.2.0-debug.apk
 ```
 
 `adb install -r -g` grants `android.permission.CAMERA` and `android.permission.RECORD_AUDIO`. It does not grant the USB device permission. See [Pre-granting permissions with an MDM](#pre-granting-permissions-with-an-mdm).
@@ -245,10 +250,13 @@ These are real constraints, not a test plan:
 - USB hot-plug broadcasts are missing on some boards. The source list also re-reads USB devices every couple of seconds while it is on screen.
 - The USB device dialog is a system screen. Denying it returns to the list. The library waits on that grant on its own thread; leaving the dialog up and backing out is safe, but the grant still has to be answered. Accepting the attach chooser for this connection skips that dialog. Runtime-permission policy cannot pre-grant it.
 - The app is landscape (`sensorLandscape`). A board whose firmware freezes orientation may letterbox it.
+- Picture-in-picture needs Android 8 (API 26) and the system feature. Android 7 hides the button and shows "Picture-in-picture isn't available on this board". The same toast is used when a board turns the feature off. There is no drawing-over-other-apps fallback: a floating window that is not the system picture-in-picture window cannot sit on top of the SMART ink app without a privileged overlay, and that path is not implemented.
+- Closing the picture-in-picture window, or leaving the app while auto-shrink is off, stops the capture card and the audio. Opening the DVD Player icon while the window is up returns to the same full-screen player. A USB attach while the window is up does not start a second copy.
+- The picture-in-picture mute control silences the speakers. It does not reopen the USB audio device. Freeze in that window is the same hold as the on-screen Freeze button.
 - No Play services, no network permission, no account. Teachers have nothing to set up. The MDM keys in [Managed settings](#managed-settings) are the configuration. The 3-second hold is the only control stored on the board, and a managed `lock_controls` replaces it.
 
 ## What a build does not prove
 
-Unit tests cover source filtering, which source starts on its own, managed-configuration parsing, blank-frame detection, the PCM meter, preview-size choice, the audio format plan, and the delay line. `assembleDebug` proves the app and the UVCAndroid AAR compile and package. The arm64 and x86_64 copies of libuvc in that APK are 16 KB aligned; that was checked from the ELF headers, not by booting a 16 KB-page device.
+Unit tests cover source filtering, which source starts on its own, managed-configuration parsing, picture-in-picture aspect and auto-enter rules, blank-frame detection, the PCM meter, preview-size choice, the audio format plan, and the delay line. `assembleDebug` proves the app and the UVCAndroid AAR compile and package. The arm64 and x86_64 copies of libuvc in that APK are 16 KB aligned; that was checked from the ELF headers, not by booting a 16 KB-page device.
 
 Nothing in the build can show a real UVC frame, a USB permission dialog, hot-plug, USB audio routing, media-playback capture, or lip-sync. Those need a capture card on the target board.

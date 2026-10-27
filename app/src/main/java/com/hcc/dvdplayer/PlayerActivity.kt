@@ -1,16 +1,25 @@
 package com.hcc.dvdplayer
 
 import android.Manifest
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
+import android.util.Rational
+import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -34,6 +43,8 @@ import com.hcc.dvdplayer.logic.AudioFormatPlanner
 import com.hcc.dvdplayer.logic.BlankFrame
 import com.hcc.dvdplayer.logic.BlankWatch
 import com.hcc.dvdplayer.logic.ManagedSettings
+import com.hcc.dvdplayer.logic.PipAspect
+import com.hcc.dvdplayer.logic.PipEntry
 import com.hcc.dvdplayer.logic.RememberedSource
 import com.hcc.dvdplayer.logic.RuntimePermissions
 import com.hcc.dvdplayer.preview.Camera2PreviewSession
@@ -44,6 +55,7 @@ import com.hcc.dvdplayer.source.ListedSource
 import com.hcc.dvdplayer.source.SnapshotSaver
 import com.hcc.dvdplayer.source.SourceCatalog
 import com.hcc.dvdplayer.source.UsbEvents
+import java.lang.ref.WeakReference
 import kotlin.math.abs
 
 class PlayerActivity : AppCompatActivity() {
@@ -72,6 +84,8 @@ class PlayerActivity : AppCompatActivity() {
     private var frozenBitmap: Bitmap? = null
     private var snapshotInFlight = false
     private var freezeInFlight = false
+    private var mediaReleased = false
+    private var pipReceiverRegistered = false
     private val blankWatch = BlankWatch()
     private var lockDownX = 0f
     private var lockDownY = 0f
@@ -156,7 +170,18 @@ class PlayerActivity : AppCompatActivity() {
             if (leaving || !::binding.isInitialized) return
             settings = appSettings.current()
             applyControlPolicy()
-            if (binding.backBar.visibility == View.VISIBLE) showChrome()
+            updatePipParams()
+            if (!inPip() && binding.backBar.visibility == View.VISIBLE) showChrome()
+        }
+    }
+
+    private val pipActionsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (mediaReleased || leaving) return
+            when (intent?.action) {
+                ACTION_PIP_FREEZE -> if (settings.enableFreeze) toggleFreeze()
+                ACTION_PIP_MUTE -> toggleMute()
+            }
         }
     }
 
@@ -175,6 +200,7 @@ class PlayerActivity : AppCompatActivity() {
         binding.zoomButton.setOnClickListener { toggleZoom() }
         binding.freezeButton.setOnClickListener { toggleFreeze() }
         binding.snapshotButton.setOnClickListener { onSnapshotClicked() }
+        binding.pipButton.setOnClickListener { enterPipFromButton() }
         binding.frozenBanner.setOnClickListener { if (frozen) clearFreeze() }
         binding.playerRoot.setOnClickListener { showChrome() }
         val pictureTouch = View.OnTouchListener { _, event ->
@@ -202,6 +228,10 @@ class PlayerActivity : AppCompatActivity() {
         applyControlPolicy()
         UsbEvents.register(this, usbReceiver)
         appSettings.registerRestrictionsListener(this, restrictionsReceiver)
+        registerPipActions()
+        activePlayer = WeakReference(this)
+        notePipUnavailable()
+        updatePipParams()
         showChrome()
         handler.post(meterPoll)
         when (intent.getStringExtra(EXTRA_KIND)) {
@@ -209,6 +239,42 @@ class PlayerActivity : AppCompatActivity() {
             KIND_CAMERA2 -> startCamera2()
             else -> finishWithNotice(getString(R.string.open_failed))
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Keep the original playback extras. Launcher and USB attach reorder this
+        // activity to the front, which expands picture-in-picture. Replacing the
+        // intent would drop the source and could open a second capture.
+        updatePipParams()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O..Build.VERSION_CODES.R) {
+            enterPipIfAutomatic()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (!::binding.isInitialized || mediaReleased) return
+        if (isInPictureInPictureMode) hideChromeForPip() else restoreFromPip()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (mediaReleased && !isFinishing) finish()
+    }
+
+    override fun onStop() {
+        // Paused-but-visible (picture-in-picture) does not stop. Closing the
+        // floating window, or leaving without one, does.
+        if (!inPip()) releaseMedia()
+        super.onStop()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -227,16 +293,11 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         leaving = true
         handler.removeCallbacksAndMessages(null)
-        audio?.stop()
-        audio = null
-        uvc?.release()
-        uvc = null
-        camera2?.release()
-        camera2 = null
-        blankWatch.onClosed()
+        releaseMedia()
         bindingOrNull()?.freezeFrame?.setImageDrawable(null)
         frozenBitmap?.recycle()
         frozenBitmap = null
+        if (activePlayer?.get() === this) activePlayer = null
         try {
             unregisterReceiver(usbReceiver)
         } catch (_: Exception) {
@@ -244,6 +305,13 @@ class PlayerActivity : AppCompatActivity() {
         try {
             unregisterReceiver(restrictionsReceiver)
         } catch (_: Exception) {
+        }
+        if (pipReceiverRegistered) {
+            try {
+                unregisterReceiver(pipActionsReceiver)
+            } catch (_: Exception) {
+            }
+            pipReceiverRegistered = false
         }
         super.onDestroy()
     }
@@ -347,6 +415,7 @@ class PlayerActivity : AppCompatActivity() {
             handler.post(blankPoll)
         }
         startAudio(syncDelayMs)
+        updatePipParams()
     }
 
     private fun rememberPlayingSource() {
@@ -427,8 +496,8 @@ class PlayerActivity : AppCompatActivity() {
         renderStatus()
         if (sticky) {
             handler.removeCallbacks(hideStatus)
-            binding.status.visibility = View.VISIBLE
-        } else {
+            if (!inPip()) binding.status.visibility = View.VISIBLE
+        } else if (!inPip()) {
             scheduleStatusHide()
         }
     }
@@ -446,10 +515,11 @@ class PlayerActivity : AppCompatActivity() {
         videoHeight = height
         binding.videoFrame.setAspect(width, height)
         resolution = getString(R.string.resolution_fmt, width, height)
-        if (changed && !audioSticky) {
+        if (changed && !audioSticky && !inPip()) {
             renderStatus()
             scheduleStatusHide()
         }
+        updatePipParams()
     }
 
     private fun toggleZoom() {
@@ -476,7 +546,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun renderStatus() {
         val text = listOfNotNull(resolution, audioMessage).filter { it.isNotBlank() }.joinToString(" · ")
         binding.status.text = text
-        binding.status.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        binding.status.visibility = if (text.isEmpty() || inPip()) View.GONE else View.VISIBLE
     }
 
     private fun scheduleStatusHide() {
@@ -513,17 +583,31 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun showChrome() {
+        if (inPip()) {
+            binding.backBar.visibility = View.GONE
+            return
+        }
         binding.backBar.visibility = View.VISIBLE
         handler.removeCallbacks(hideChrome)
         handler.postDelayed(hideChrome, settings.controlsAutohideSeconds * 1_000L)
     }
 
     private fun applyControlPolicy() {
+        if (inPip()) {
+            hideChromeForPip()
+            if (!settings.enableFreeze && frozen) clearFreeze()
+            return
+        }
         val locked = settings.lockControls
         binding.backButton.visibility = if (locked) View.GONE else View.VISIBLE
         binding.zoomButton.visibility = if (locked) View.GONE else View.VISIBLE
         binding.snapshotButton.visibility = if (settings.enableSnapshot) View.VISIBLE else View.GONE
         binding.freezeButton.visibility = if (settings.enableFreeze) View.VISIBLE else View.GONE
+        binding.pipButton.visibility = if (PipEntry.buttonVisible(settings.enablePip, pipFeature())) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
         binding.audioMeter.visibility = if (settings.showAudioMeter) View.VISIBLE else View.GONE
         if (locked) hideDiagnostics()
         if (!settings.enableFreeze && frozen) clearFreeze()
@@ -614,6 +698,7 @@ class PlayerActivity : AppCompatActivity() {
                 binding.frozenBanner.visibility = View.VISIBLE
                 binding.noSignal.visibility = View.GONE
                 binding.freezeButton.setText(R.string.live)
+                updatePipParams()
                 showChrome()
             }, handler)
         } catch (_: Exception) {
@@ -632,6 +717,7 @@ class PlayerActivity : AppCompatActivity() {
         frozenBitmap?.recycle()
         frozenBitmap = null
         binding.freezeButton.setText(R.string.freeze)
+        updatePipParams()
         renderNoSignal()
     }
 
@@ -771,6 +857,191 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun intentUsbName(): String? = intent.getStringExtra(EXTRA_USB_DEVICE)
 
+    private fun keepsPlayback(): Boolean {
+        return !mediaReleased && !isFinishing && !leaving && (pictureStarted || uvc != null || camera2 != null)
+    }
+
+    private fun releaseMedia() {
+        if (mediaReleased) return
+        mediaReleased = true
+        handler.removeCallbacks(blankPoll)
+        handler.removeCallbacks(meterPoll)
+        val currentAudio = audio
+        audio = null
+        currentAudio?.stop()
+        uvc?.release()
+        uvc = null
+        camera2?.release()
+        camera2 = null
+        blankWatch.onClosed()
+    }
+
+    private fun inPip(): Boolean = isInPictureInPictureMode
+
+    private fun pipFeature(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
+    private fun shouldAutoEnter(): Boolean {
+        return PipEntry.autoEnter(
+            enablePip = settings.enablePip,
+            autoOnLeave = settings.autoPipOnLeave,
+            featurePresent = pipFeature(),
+            pictureStarted = pictureStarted,
+            finishing = leaving || isFinishing || mediaReleased,
+            inPip = inPip(),
+        )
+    }
+
+    private fun registerPipActions() {
+        if (pipReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(ACTION_PIP_FREEZE)
+            addAction(ACTION_PIP_MUTE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pipActionsReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(pipActionsReceiver, filter)
+        }
+        pipReceiverRegistered = true
+    }
+
+    private fun updatePipParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !pipFeature() || mediaReleased) return
+        if (!::binding.isInitialized) return
+        try {
+            setPictureInPictureParams(buildPipParams())
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "setPictureInPictureParams", error)
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "setPictureInPictureParams", error)
+        }
+    }
+
+    private fun buildPipParams(): PictureInPictureParams {
+        val (width, height) = PipAspect.rational(
+            if (videoWidth > 0) videoWidth else 16,
+            if (videoHeight > 0) videoHeight else 9,
+        )
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(width, height))
+            .setActions(pipRemoteActions())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(shouldAutoEnter())
+            builder.setSeamlessResizeEnabled(true)
+        }
+        return builder.build()
+    }
+
+    private fun pipRemoteActions(): List<RemoteAction> {
+        val actions = ArrayList<RemoteAction>(2)
+        if (settings.enableFreeze) {
+            actions += remoteAction(
+                requestCode = 1,
+                action = ACTION_PIP_FREEZE,
+                icon = if (frozen) R.drawable.ic_pip_live else R.drawable.ic_pip_freeze,
+                label = getString(if (frozen) R.string.live else R.string.freeze),
+            )
+        }
+        val muted = audio?.isMuted() == true
+        actions += remoteAction(
+            requestCode = 2,
+            action = ACTION_PIP_MUTE,
+            icon = if (muted) R.drawable.ic_pip_sound else R.drawable.ic_pip_mute,
+            label = getString(if (muted) R.string.pip_unmute else R.string.pip_mute),
+        )
+        return actions
+    }
+
+    private fun remoteAction(requestCode: Int, action: String, icon: Int, label: String): RemoteAction {
+        val pending = PendingIntent.getBroadcast(
+            this,
+            requestCode,
+            Intent(action).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return RemoteAction(Icon.createWithResource(this, icon), label, label, pending)
+    }
+
+    private fun enterPipFromButton() {
+        if (!pipFeature()) {
+            tellPipUnavailable()
+            return
+        }
+        enterPipNow(reportFailure = true)
+    }
+
+    private fun enterPipIfAutomatic() {
+        if (!shouldAutoEnter()) return
+        enterPipNow(reportFailure = false)
+    }
+
+    private fun enterPipNow(reportFailure: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            if (reportFailure) tellPipUnavailable()
+            return
+        }
+        try {
+            val params = buildPipParams()
+            setPictureInPictureParams(params)
+            if (!enterPictureInPictureMode(params)) {
+                Log.i(TAG, "enterPictureInPictureMode returned false")
+                if (reportFailure) tellPipUnavailable()
+            }
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "enterPictureInPictureMode", error)
+            if (reportFailure) tellPipUnavailable()
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "enterPictureInPictureMode", error)
+            if (reportFailure) tellPipUnavailable()
+        }
+    }
+
+    private fun notePipUnavailable() {
+        if (!settings.enablePip || pipFeature() || notedPipUnavailable) return
+        notedPipUnavailable = true
+        tellPipUnavailable()
+    }
+
+    private fun tellPipUnavailable() {
+        Log.i(TAG, getString(R.string.pip_unavailable))
+        if (isFinishing) return
+        Toast.makeText(this, R.string.pip_unavailable, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun toggleMute() {
+        audio?.setMuted(audio?.isMuted() != true)
+        updatePipParams()
+    }
+
+    private fun hideChromeForPip() {
+        binding.backBar.visibility = View.GONE
+        binding.status.visibility = View.GONE
+        binding.audioMeter.visibility = View.GONE
+        binding.frozenBanner.visibility = View.GONE
+        binding.snapshotConfirm.visibility = View.GONE
+        binding.diagnostics.visibility = View.GONE
+        binding.noSignal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        handler.removeCallbacks(hideChrome)
+    }
+
+    private fun restoreFromPip() {
+        binding.noSignal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+        applyControlPolicy()
+        renderNoSignal()
+        if (audioSticky) {
+            binding.status.visibility = View.VISIBLE
+        } else {
+            renderStatus()
+        }
+        if (frozen) binding.frozenBanner.visibility = View.VISIBLE
+        showChrome()
+        enterImmersive()
+        updatePipParams()
+    }
+
     private fun enterImmersive() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -787,7 +1058,27 @@ class PlayerActivity : AppCompatActivity() {
         const val KIND_USB = "usb"
         const val KIND_CAMERA2 = "camera2"
 
+        private const val TAG = "DvdPlayer"
+        private const val ACTION_PIP_FREEZE = "com.hcc.dvdplayer.action.PIP_FREEZE"
+        private const val ACTION_PIP_MUTE = "com.hcc.dvdplayer.action.PIP_MUTE"
         private const val STATUS_HIDE_MS = 3_000L
+
+        private var activePlayer: WeakReference<PlayerActivity>? = null
+        private var notedPipUnavailable = false
+
+        /**
+         * Launcher and USB-attach intents land on [PickerActivity]. When this
+         * player is already showing a picture, bring it forward instead of
+         * stacking another copy. Resuming it leaves picture-in-picture.
+         */
+        fun expandExisting(context: Context): Boolean {
+            val player = activePlayer?.get() ?: return false
+            if (!player.keepsPlayback()) return false
+            context.startActivity(
+                Intent(context, PlayerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            )
+            return true
+        }
         private const val LOCK_HOLD_MS = 3_000L
         private const val BLANK_POLL_MS = 2_000L
         private const val METER_POLL_MS = 100L

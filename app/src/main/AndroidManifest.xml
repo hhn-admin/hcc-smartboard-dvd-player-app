@@ -42,6 +42,7 @@
             android:name=".PickerActivity"
             android:banner="@drawable/tv_banner"
             android:configChanges="keyboard|keyboardHidden"
+            android:alwaysRetainTaskState="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape">
@@ -65,8 +66,11 @@
 
         <activity
             android:name=".PlayerActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
             android:exported="false"
             android:launchMode="singleTop"
-            android:screenOrientation="sensorLandscape" />
+            android:resizeableActivity="true"
+            android:screenOrientation="sensorLandscape"
+            android:supportsPictureInPicture="true" />
     </application>
 </manifest>

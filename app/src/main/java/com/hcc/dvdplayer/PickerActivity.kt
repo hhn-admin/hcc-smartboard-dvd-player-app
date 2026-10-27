@@ -107,6 +107,15 @@ class PickerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (PlayerActivity.expandExisting(this)) {
+            // Launcher or USB attach while a picture is already up: bring that
+            // player forward (this expands picture-in-picture) instead of stacking
+            // a second picker. singleTop cannot absorb the intent when the player
+            // is the top activity, so this instance is the duplicate and it exits.
+            closedForExcludedUsb = true
+            finish()
+            return
+        }
         if (isExcludedUsbAttach(intent)) {
             closedForExcludedUsb = true
             finish()

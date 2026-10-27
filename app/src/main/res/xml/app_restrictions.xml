@@ -63,4 +63,18 @@
         android:key="extra_excluded_vids"
         android:restrictionType="string"
         android:title="@string/restrict_extra_vids_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_enable_pip_desc"
+        android:key="enable_pip"
+        android:restrictionType="bool"
+        android:title="@string/restrict_enable_pip_title" />
+
+    <restriction
+        android:defaultValue="true"
+        android:description="@string/restrict_auto_pip_desc"
+        android:key="auto_pip_on_leave"
+        android:restrictionType="bool"
+        android:title="@string/restrict_auto_pip_title" />
 </restrictions>

@@ -19,6 +19,8 @@ data class ManagedSettings(
     val controlsAutohideSeconds: Int,
     val excludeSmartDevices: Boolean,
     val extraExcludedVids: Set<Int>,
+    val enablePip: Boolean,
+    val autoPipOnLeave: Boolean,
 ) {
     val exclusionPolicy: ExclusionPolicy
         get() = ExclusionPolicy(excludeSmartDevices, extraExcludedVids)
@@ -33,6 +35,8 @@ data class ManagedSettings(
         const val CONTROLS_AUTOHIDE_SECONDS = "controls_autohide_seconds"
         const val EXCLUDE_SMART_DEVICES = "exclude_smart_devices"
         const val EXTRA_EXCLUDED_VIDS = "extra_excluded_vids"
+        const val ENABLE_PIP = "enable_pip"
+        const val AUTO_PIP_ON_LEAVE = "auto_pip_on_leave"
 
         const val AUTOHIDE_DEFAULT = 4
         const val AUTOHIDE_MIN = 1
@@ -61,6 +65,8 @@ data class ManagedSettings(
                 controlsAutohideSeconds = seconds.coerceIn(AUTOHIDE_MIN, AUTOHIDE_MAX),
                 excludeSmartDevices = bool(input, EXCLUDE_SMART_DEVICES, true),
                 extraExcludedVids = vids,
+                enablePip = bool(input, ENABLE_PIP, true),
+                autoPipOnLeave = bool(input, AUTO_PIP_ON_LEAVE, true),
             )
         }
 
