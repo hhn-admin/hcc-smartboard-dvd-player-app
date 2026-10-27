@@ -76,11 +76,20 @@ class AudioLoopback(
     private var quietPolls = 0
     @Volatile private var directUsbNote: String = "not started"
     @Volatile private var pcmLevel = 0f
+    @Volatile private var muted = false
 
     fun directUsbNote(): String = directUsbNote
 
     /** Latest PCM peak, 0 for silence and 1 for full scale. */
     fun level(): Float = pcmLevel
+
+    fun isMuted(): Boolean = muted
+
+    /** Silences the speakers. Capture keeps running so unmute does not renegotiate USB audio. */
+    fun setMuted(value: Boolean) {
+        muted = value
+        applyGain()
+    }
 
     fun start() {
         if (running) return
@@ -467,6 +476,7 @@ class AudioLoopback(
         if (!afterPreroll()) return false
         try {
             audioTrack.play()
+            applyGain()
         } catch (error: Exception) {
             Log.w(TAG, "track.play", error)
             return false
@@ -625,6 +635,15 @@ class AudioLoopback(
             currentTrack?.pause()
             currentTrack?.flush()
             currentTrack?.release()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun applyGain() {
+        val current = track
+        if (current == null) return
+        try {
+            current.setVolume(if (muted) 0f else 1f)
         } catch (_: Exception) {
         }
     }

@@ -20,6 +20,8 @@ class ManagedSettingsTest {
         assertTrue(settings.excludeSmartDevices)
         assertTrue(settings.extraExcludedVids.isEmpty())
         assertTrue(settings.exclusionPolicy.excludeSmartDevices)
+        assertTrue(settings.enablePip)
+        assertTrue(settings.autoPipOnLeave)
     }
 
     @Test
@@ -34,6 +36,8 @@ class ManagedSettingsTest {
                     ManagedSettings.ENABLE_FREEZE,
                     ManagedSettings.CONTROLS_AUTOHIDE_SECONDS,
                     ManagedSettings.EXCLUDE_SMART_DEVICES,
+                    ManagedSettings.ENABLE_PIP,
+                    ManagedSettings.AUTO_PIP_ON_LEAVE,
                 ),
                 bools = mapOf(
                     ManagedSettings.AUTO_START to false,
@@ -42,6 +46,8 @@ class ManagedSettingsTest {
                     ManagedSettings.ENABLE_SNAPSHOT to false,
                     ManagedSettings.ENABLE_FREEZE to false,
                     ManagedSettings.EXCLUDE_SMART_DEVICES to false,
+                    ManagedSettings.ENABLE_PIP to false,
+                    ManagedSettings.AUTO_PIP_ON_LEAVE to false,
                 ),
                 ints = mapOf(ManagedSettings.CONTROLS_AUTOHIDE_SECONDS to 9),
             ),
@@ -53,6 +59,8 @@ class ManagedSettingsTest {
         assertFalse(settings.enableSnapshot)
         assertFalse(settings.enableFreeze)
         assertFalse(settings.excludeSmartDevices)
+        assertFalse(settings.enablePip)
+        assertFalse(settings.autoPipOnLeave)
         assertEquals(9, settings.controlsAutohideSeconds)
         assertTrue(settings.lockControls)
         assertFalse(settings.lockManaged)

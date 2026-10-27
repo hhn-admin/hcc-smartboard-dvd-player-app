@@ -49,6 +49,8 @@ class Camera2PreviewSession(
     private var session: CameraCaptureSession? = null
     private var released = false
     private var opened = false
+    private var pendingSurface: Surface? = null
+    private var sessionSurface: Surface? = null
 
     val previewWidth: Int
     val previewHeight: Int
@@ -60,7 +62,12 @@ class Camera2PreviewSession(
     }
 
     fun start(surface: Surface) {
-        if (released || opened) return
+        if (released) return
+        pendingSurface = surface
+        if (opened) {
+            handler.post { retargetIfReady() }
+            return
+        }
         opened = true
         listener.onAspectKnown(previewWidth, previewHeight)
         if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -103,9 +110,11 @@ class Camera2PreviewSession(
                     return
                 }
                 device = camera
+                val target = pendingSurface ?: surface
                 val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                request.addTarget(surface)
+                request.addTarget(target)
                 request.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                sessionSurface = target
                 val sessionCallback = object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(captureSession: CameraCaptureSession) {
                             if (released) {
@@ -126,7 +135,7 @@ class Camera2PreviewSession(
                             emit { listener.onFailed("Could not configure the camera preview") }
                         }
                     }
-                createSession(camera, surface, sessionCallback)
+                createSession(camera, target, sessionCallback)
             }
 
             override fun onDisconnected(camera: CameraDevice) {
@@ -142,6 +151,45 @@ class Camera2PreviewSession(
                 emit { listener.onFailed("Camera error $error") }
             }
         }, handler)
+    }
+
+    private fun retargetIfReady() {
+        val camera = device ?: return
+        val target = pendingSurface ?: return
+        if (released || target === sessionSurface) return
+        try {
+            session?.close()
+        } catch (error: Exception) {
+            Log.w(TAG, "session close", error)
+        }
+        session = null
+        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+        request.addTarget(target)
+        request.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+        sessionSurface = target
+        val callback = object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(captureSession: CameraCaptureSession) {
+                if (released || pendingSurface !== target) {
+                    captureSession.close()
+                    return
+                }
+                session = captureSession
+                try {
+                    captureSession.setRepeatingRequest(request.build(), null, handler)
+                } catch (error: Exception) {
+                    Log.w(TAG, "retarget", error)
+                }
+            }
+
+            override fun onConfigureFailed(captureSession: CameraCaptureSession) {
+                Log.w(TAG, "retarget configure failed")
+            }
+        }
+        try {
+            createSession(camera, target, callback)
+        } catch (error: Exception) {
+            Log.w(TAG, "retarget", error)
+        }
     }
 
     private fun createSession(

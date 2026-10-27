@@ -23,6 +23,10 @@
     <string name="live">Live</string>
     <string name="frozen_banner">FROZEN - tap to go live</string>
     <string name="snapshot">Snapshot</string>
+    <string name="picture_in_picture">Picture-in-picture</string>
+    <string name="pip_unavailable">Picture-in-picture isn\'t available on this board</string>
+    <string name="pip_mute">Mute</string>
+    <string name="pip_unmute">Unmute</string>
     <string name="snapshot_saved">Snapshot saved to Pictures/DVD Player</string>
     <string name="snapshot_saved_private">Snapshot saved in the app pictures folder. Allow storage access to put it in Pictures/DVD Player.</string>
     <string name="snapshot_failed">Could not save the snapshot.</string>
@@ -64,4 +68,8 @@
     <string name="restrict_exclude_smart_desc">Leave on. Hides USB vendor 0x0B8C and SMART webcam names so the board camera is not a source.</string>
     <string name="restrict_extra_vids_title">Extra USB vendor ids to hide</string>
     <string name="restrict_extra_vids_desc">Comma-separated hex vendor ids, for example 0x1234,534D. Empty hides nothing extra.</string>
+    <string name="restrict_enable_pip_title">Picture-in-picture</string>
+    <string name="restrict_enable_pip_desc">Show the Picture-in-picture button and allow the floating DVD window. On by default. Off hides the button.</string>
+    <string name="restrict_auto_pip_title">Shrink when leaving the app</string>
+    <string name="restrict_auto_pip_desc">Home, the SMART launcher, or another app shrinks the DVD into the floating window while sound keeps playing. On by default.</string>
 </resources>
