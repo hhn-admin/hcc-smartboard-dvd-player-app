@@ -1,5 +1,6 @@
 package com.hcc.dvdplayer
 
+import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
@@ -17,8 +18,12 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import kotlin.math.max
 import com.hcc.dvdplayer.databinding.ActivityPickerBinding
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
+import com.hcc.dvdplayer.logic.LaunchChoice
+import com.hcc.dvdplayer.logic.ManagedSettings
 import com.hcc.dvdplayer.logic.PickerPrompt
 import com.hcc.dvdplayer.logic.RuntimePermissions
+import com.hcc.dvdplayer.source.AppSettings
+import com.hcc.dvdplayer.source.LastSourceStore
 import com.hcc.dvdplayer.source.ListedSource
 import com.hcc.dvdplayer.source.SourceCatalog
 import com.hcc.dvdplayer.source.UsbEvents
@@ -27,6 +32,12 @@ import com.hcc.dvdplayer.ui.SourceAdapter
 class PickerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPickerBinding
     private lateinit var catalog: SourceCatalog
+    private lateinit var appSettings: AppSettings
+    private lateinit var lastSource: LastSourceStore
+    private var settings: ManagedSettings = ManagedSettings.parse(
+        com.hcc.dvdplayer.logic.RestrictionInput(emptySet()),
+        localLock = false,
+    )
     private val adapter = SourceAdapter(::onSourceClicked)
     private val handler = Handler(Looper.getMainLooper())
     private var signature = ""
@@ -45,7 +56,7 @@ class PickerActivity : AppCompatActivity() {
         val stillMissing = if (source != null) {
             RuntimePermissions.requiredFor(source).filterNot(::has)
         } else {
-            missingPermissions(catalog.list())
+            missingPermissions(catalog.list(settings.exclusionPolicy))
         }
         permissionDenied = stillMissing.isNotEmpty()
         if (stillMissing.isEmpty()) {
@@ -73,8 +84,16 @@ class PickerActivity : AppCompatActivity() {
         refresh()
     }
 
-    private val usbReceiver = object : android.content.BroadcastReceiver() {
+    private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            refresh()
+        }
+    }
+
+    private val restrictionsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            if (closedForExcludedUsb || !::appSettings.isInitialized) return
+            settings = appSettings.current()
             refresh()
         }
     }
@@ -96,11 +115,15 @@ class PickerActivity : AppCompatActivity() {
         binding = ActivityPickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
         catalog = SourceCatalog(this)
+        appSettings = AppSettings(this)
+        lastSource = LastSourceStore(this)
+        settings = appSettings.current()
         binding.sources.layoutManager = LinearLayoutManager(this)
         binding.sources.adapter = adapter
         binding.permissionButton.setOnClickListener { requestAccess() }
         keepEmptyPromptAboveSystemBars()
         UsbEvents.register(this, usbReceiver)
+        appSettings.registerRestrictionsListener(this, restrictionsReceiver)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -131,7 +154,10 @@ class PickerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (!closedForExcludedUsb) unregisterReceiver(usbReceiver)
+        if (!closedForExcludedUsb) {
+            unregisterReceiver(usbReceiver)
+            unregisterReceiver(restrictionsReceiver)
+        }
         super.onDestroy()
     }
 
@@ -159,7 +185,8 @@ class PickerActivity : AppCompatActivity() {
         if (inRefresh) return
         inRefresh = true
         try {
-            val sources = catalog.list()
+            settings = appSettings.current()
+            val sources = catalog.list(settings.exclusionPolicy)
             val nextSignature = sources.joinToString("\n") { it.signature() }
             val pointed = PickerPrompt.pointedSource(sources)
             if (nextSignature != signature) {
@@ -189,16 +216,26 @@ class PickerActivity : AppCompatActivity() {
             binding.stepPlug.isActivated = empty
             binding.stepTap.isActivated = !empty
             renderPermission(sources)
-            if (PickerPrompt.shouldAutoStart(
-                    sources = sources,
-                    grantedPermissions = grantedPermissions(),
-                    returnedFromPlayer = returnedFromPlayer,
-                    openInProgress = openInProgress,
-                )
-            ) {
-                open(sources.first())
-            }
-            if (sources.size != 1) returnedFromPlayer = false
+            val granted = grantedPermissions()
+            val remembered = lastSource.load()
+            val choice = LaunchChoice.choose(
+                sources = sources,
+                grantedPermissions = granted,
+                returnedFromPlayer = returnedFromPlayer,
+                openInProgress = openInProgress,
+                autoStart = settings.autoStart,
+                remembered = remembered,
+            )
+            if (choice != null) open(choice)
+            val stillEligible = LaunchChoice.choose(
+                sources = sources,
+                grantedPermissions = granted,
+                returnedFromPlayer = false,
+                openInProgress = false,
+                autoStart = settings.autoStart,
+                remembered = remembered,
+            )
+            if (stillEligible == null) returnedFromPlayer = false
         } finally {
             inRefresh = false
         }
@@ -223,7 +260,7 @@ class PickerActivity : AppCompatActivity() {
             openInProgress = false
             binding.notice.setText(R.string.camera_permission_required)
             binding.notice.visibility = View.VISIBLE
-            renderPermission(catalog.list())
+            renderPermission(catalog.list(settings.exclusionPolicy))
             return
         }
         val intent = Intent(this, PlayerActivity::class.java)
@@ -253,7 +290,7 @@ class PickerActivity : AppCompatActivity() {
     }
 
     private fun requestAccess() {
-        val sources = catalog.list()
+        val sources = catalog.list(settings.exclusionPolicy)
         val missing = missingPermissions(sources)
         val permanentlyDenied = permissionDenied && missing.any { permission ->
             !shouldShowRequestPermissionRationale(permission)
@@ -305,10 +342,16 @@ class PickerActivity : AppCompatActivity() {
     private fun isExcludedUsbAttach(intent: Intent?): Boolean {
         if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return false
         val device = UsbEvents.device(intent) ?: return false
+        val policy = if (::appSettings.isInitialized) {
+            appSettings.current().exclusionPolicy
+        } else {
+            AppSettings(this).current().exclusionPolicy
+        }
         return CaptureSourceFilter.isExcludedUsb(
             device.vendorId,
             quietName { device.productName },
             quietName { device.manufacturerName },
+            policy = policy,
         )
     }
 

@@ -19,7 +19,48 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:contentDescription="@string/preview_description" />
+
+        <ImageView
+            android:id="@+id/freeze_frame"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/frozen_banner"
+            android:scaleType="fitXY"
+            android:visibility="gone" />
     </com.hcc.dvdplayer.ui.AspectFitLayout>
+
+    <TextView
+        android:id="@+id/no_signal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginStart="48dp"
+        android:layout_marginEnd="48dp"
+        android:background="#CC000000"
+        android:gravity="center"
+        android:padding="28dp"
+        android:text="@string/no_signal"
+        android:textColor="@color/on_surface"
+        android:textSize="28sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/frozen_banner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="#CC000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:paddingStart="28dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="28dp"
+        android:paddingBottom="18dp"
+        android:text="@string/frozen_banner"
+        android:textColor="@color/notice"
+        android:textSize="32sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/status"
@@ -38,32 +79,99 @@
         android:textColor="@color/on_surface"
         android:textSize="18sp" />
 
-    <LinearLayout
+    <HorizontalScrollView
         android:id="@+id/back_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
         android:background="#B3000000"
-        android:padding="16dp">
+        android:fillViewport="true"
+        android:scrollbars="none">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/back_button"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:minWidth="140dp"
-            android:minHeight="64dp"
-            android:text="@string/back"
-            android:textSize="20sp" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/zoom_button"
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/back_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="140dp"
+                android:minHeight="64dp"
+                android:text="@string/change_source"
+                android:textSize="20sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/freeze_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:minWidth="140dp"
+                android:minHeight="64dp"
+                android:text="@string/freeze"
+                android:textSize="20sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/snapshot_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:minWidth="140dp"
+                android:minHeight="64dp"
+                android:text="@string/snapshot"
+                android:textSize="20sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/zoom_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:minWidth="180dp"
+                android:minHeight="64dp"
+                android:text="@string/zoom_to_fill"
+                android:textSize="20sp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <com.hcc.dvdplayer.ui.AudioMeterView
+        android:id="@+id/audio_meter"
+        android:layout_width="140dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="28dp"
+        android:layout_marginBottom="28dp"
+        android:contentDescription="@string/audio_meter" />
+
+    <LinearLayout
+        android:id="@+id/snapshot_confirm"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="88dp"
+        android:background="#CC000000"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/snapshot_thumb"
+            android:layout_width="96dp"
+            android:layout_height="54dp"
+            android:contentDescription="@string/snapshot_saved"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/snapshot_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:minWidth="180dp"
-            android:minHeight="64dp"
-            android:text="@string/zoom_to_fill"
-            android:textSize="20sp" />
+            android:paddingStart="12dp"
+            android:text="@string/snapshot_saved"
+            android:textColor="@color/on_surface"
+            android:textSize="18sp" />
     </LinearLayout>
 
     <ScrollView

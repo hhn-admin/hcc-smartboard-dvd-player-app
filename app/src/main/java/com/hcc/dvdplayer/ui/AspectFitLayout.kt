@@ -6,11 +6,12 @@ import android.widget.FrameLayout
 import com.hcc.dvdplayer.logic.PreviewSizeChooser
 
 /**
- * Sizes its single child to the video aspect and centers it in the full screen.
+ * Sizes every child to the video aspect and centers them in the full screen.
  *
- * The child is measured from the screen, not from the capture's pixel size, so
- * a 640x480 frame scales up until it touches an edge. [setCropToFill] covers
+ * The children are measured from the screen, not from the capture's pixel size,
+ * so a 640x480 frame scales up until it touches an edge. [setCropToFill] covers
  * the screen and lets the extra hang off the edges. Neither mode stretches.
+ * A freeze still is a second child and uses the same rectangle as the video.
  */
 class AspectFitLayout @JvmOverloads constructor(
     context: Context,
@@ -38,7 +39,7 @@ class AspectFitLayout @JvmOverloads constructor(
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val height = MeasureSpec.getSize(heightMeasureSpec)
         setMeasuredDimension(width, height)
-        val child = getChildAt(0) ?: return
+        if (childCount == 0) return
         val (childWidth, childHeight) = PreviewSizeChooser.frameSize(
             width,
             height,
@@ -46,20 +47,23 @@ class AspectFitLayout @JvmOverloads constructor(
             aspectHeight,
             crop = cropToFill,
         )
-        child.measure(
-            MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
-        )
+        val widthSpec = MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY)
+        val heightSpec = MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY)
+        for (index in 0 until childCount) {
+            getChildAt(index).measure(widthSpec, heightSpec)
+        }
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val child = getChildAt(0) ?: return
         val width = right - left
         val height = bottom - top
-        val childWidth = child.measuredWidth
-        val childHeight = child.measuredHeight
-        val childLeft = (width - childWidth) / 2
-        val childTop = (height - childHeight) / 2
-        child.layout(childLeft, childTop, childLeft + childWidth, childTop + childHeight)
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            val childWidth = child.measuredWidth
+            val childHeight = child.measuredHeight
+            val childLeft = (width - childWidth) / 2
+            val childTop = (height - childHeight) / 2
+            child.layout(childLeft, childTop, childLeft + childWidth, childTop + childHeight)
+        }
     }
 }

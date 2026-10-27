@@ -1,18 +1,25 @@
 package com.hcc.dvdplayer
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -24,14 +31,28 @@ import com.hcc.dvdplayer.audio.AudioLoopback
 import com.hcc.dvdplayer.audio.PlaybackDiagnostics
 import com.hcc.dvdplayer.databinding.ActivityPlayerBinding
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
+import com.hcc.dvdplayer.logic.BlankFrame
+import com.hcc.dvdplayer.logic.BlankWatch
+import com.hcc.dvdplayer.logic.ManagedSettings
+import com.hcc.dvdplayer.logic.RememberedSource
 import com.hcc.dvdplayer.logic.RuntimePermissions
 import com.hcc.dvdplayer.preview.Camera2PreviewSession
 import com.hcc.dvdplayer.preview.UvcPreviewSession
+import com.hcc.dvdplayer.source.AppSettings
+import com.hcc.dvdplayer.source.LastSourceStore
+import com.hcc.dvdplayer.source.ListedSource
+import com.hcc.dvdplayer.source.SnapshotSaver
 import com.hcc.dvdplayer.source.SourceCatalog
 import com.hcc.dvdplayer.source.UsbEvents
+import kotlin.math.abs
 
 class PlayerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPlayerBinding
+    private lateinit var appSettings: AppSettings
+    private var settings: ManagedSettings = ManagedSettings.parse(
+        com.hcc.dvdplayer.logic.RestrictionInput(emptySet()),
+        localLock = false,
+    )
     private val handler = Handler(Looper.getMainLooper())
     private var uvc: UvcPreviewSession? = null
     private var camera2: Camera2PreviewSession? = null
@@ -46,12 +67,39 @@ class PlayerActivity : AppCompatActivity() {
     private var zoomFill = false
     private var audioMessage: String? = null
     private var audioSticky = false
+    private var pictureStarted = false
+    private var frozen = false
+    private var frozenBitmap: Bitmap? = null
+    private var snapshotInFlight = false
+    private var freezeInFlight = false
+    private val blankWatch = BlankWatch()
+    private var lockDownX = 0f
+    private var lockDownY = 0f
 
     private val hideChrome = Runnable {
         binding.backBar.visibility = View.GONE
     }
     private val hideStatus = Runnable {
         if (!audioSticky) binding.status.visibility = View.GONE
+    }
+    private val hideSnapshotConfirm = Runnable {
+        binding.snapshotConfirm.visibility = View.GONE
+        binding.snapshotThumb.setImageDrawable(null)
+    }
+    private val lockHold = Runnable { toggleLocalLock() }
+    private val blankPoll = object : Runnable {
+        override fun run() {
+            sampleBlank()
+            handler.postDelayed(this, BLANK_POLL_MS)
+        }
+    }
+    private val meterPoll = object : Runnable {
+        override fun run() {
+            if (settings.showAudioMeter) {
+                binding.audioMeter.setLevel(audio?.level() ?: 0f)
+            }
+            handler.postDelayed(this, METER_POLL_MS)
+        }
     }
 
     private val pictureGestures = GestureDetector(
@@ -65,12 +113,8 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                toggleZoom()
+                if (!settings.lockControls) toggleZoom()
                 return true
-            }
-
-            override fun onLongPress(e: MotionEvent) {
-                toggleDiagnostics()
             }
         },
     )
@@ -88,6 +132,13 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    private val storageRequest = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        if (leaving) return@registerForActivityResult
+        captureSnapshot()
+    }
+
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
@@ -100,23 +151,42 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    private val restrictionsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (leaving || !::binding.isInitialized) return
+            settings = appSettings.current()
+            applyControlPolicy()
+            if (binding.backBar.visibility == View.VISIBLE) showChrome()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        appSettings = AppSettings(this)
+        settings = appSettings.current()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enterImmersive()
-        binding.backButton.setOnClickListener { finishWithNotice(null) }
+        zoomFill = settings.zoomToFillDefault
+        binding.videoFrame.setCropToFill(zoomFill)
+        binding.zoomButton.setText(if (zoomFill) R.string.fit_screen else R.string.zoom_to_fill)
+        binding.backButton.setOnClickListener { onUserLeavePlayback() }
         binding.zoomButton.setOnClickListener { toggleZoom() }
+        binding.freezeButton.setOnClickListener { toggleFreeze() }
+        binding.snapshotButton.setOnClickListener { onSnapshotClicked() }
+        binding.frozenBanner.setOnClickListener { if (frozen) clearFreeze() }
         binding.playerRoot.setOnClickListener { showChrome() }
         val pictureTouch = View.OnTouchListener { _, event ->
+            trackLockHold(event)
             pictureGestures.onTouchEvent(event)
             true
         }
         binding.videoFrame.setOnTouchListener(pictureTouch)
         binding.preview.setOnTouchListener(pictureTouch)
+        binding.noSignal.setOnTouchListener(pictureTouch)
         binding.status.setOnLongClickListener {
-            toggleDiagnostics()
+            if (!settings.lockControls) toggleDiagnostics()
             true
         }
         binding.diagnosticsClose.setOnClickListener { hideDiagnostics() }
@@ -126,15 +196,14 @@ class PlayerActivity : AppCompatActivity() {
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (binding.diagnostics.visibility == View.VISIBLE) {
-                    hideDiagnostics()
-                } else {
-                    finishWithNotice(null)
-                }
+                onUserLeavePlayback()
             }
         })
+        applyControlPolicy()
         UsbEvents.register(this, usbReceiver)
+        appSettings.registerRestrictionsListener(this, restrictionsReceiver)
         showChrome()
+        handler.post(meterPoll)
         when (intent.getStringExtra(EXTRA_KIND)) {
             KIND_USB -> startUsb()
             KIND_CAMERA2 -> startCamera2()
@@ -149,17 +218,14 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_ESCAPE || keyCode == KeyEvent.KEYCODE_BUTTON_B) {
-            if (binding.diagnostics.visibility == View.VISIBLE) {
-                hideDiagnostics()
-            } else {
-                finishWithNotice(null)
-            }
+            onUserLeavePlayback()
             return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onDestroy() {
+        leaving = true
         handler.removeCallbacksAndMessages(null)
         audio?.stop()
         audio = null
@@ -167,9 +233,22 @@ class PlayerActivity : AppCompatActivity() {
         uvc = null
         camera2?.release()
         camera2 = null
-        unregisterReceiver(usbReceiver)
+        blankWatch.onClosed()
+        bindingOrNull()?.freezeFrame?.setImageDrawable(null)
+        frozenBitmap?.recycle()
+        frozenBitmap = null
+        try {
+            unregisterReceiver(usbReceiver)
+        } catch (_: Exception) {
+        }
+        try {
+            unregisterReceiver(restrictionsReceiver)
+        } catch (_: Exception) {
+        }
         super.onDestroy()
     }
+
+    private fun bindingOrNull(): ActivityPlayerBinding? = if (::binding.isInitialized) binding else null
 
     private fun startUsb() {
         val deviceName = intentUsbName()
@@ -191,12 +270,7 @@ class PlayerActivity : AppCompatActivity() {
         setStatus(getString(R.string.opening_usb), sticky = true)
         uvc = UvcPreviewSession(deviceName, object : UvcPreviewSession.Listener {
             override fun onPreviewStarted(width: Int, height: Int) {
-                if (leaving) return
-                applyVideoSize(width, height)
-                audioSticky = false
-                renderStatus()
-                scheduleStatusHide()
-                startAudio(AudioFormatPlanner.UVC_SYNC_DELAY_MS)
+                onPictureStarted(width, height, AudioFormatPlanner.UVC_SYNC_DELAY_MS)
             }
 
             override fun onVideoSize(width: Int, height: Int) {
@@ -234,12 +308,7 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onPreviewStarted(width: Int, height: Int) {
-                if (leaving) return
-                applyVideoSize(width, height)
-                audioSticky = false
-                renderStatus()
-                scheduleStatusHide()
-                startAudio(AudioFormatPlanner.CAMERA2_SYNC_DELAY_MS)
+                onPictureStarted(width, height, AudioFormatPlanner.CAMERA2_SYNC_DELAY_MS)
             }
 
             override fun onDetached() {
@@ -264,6 +333,44 @@ class PlayerActivity : AppCompatActivity() {
         setStatus(getString(R.string.opening_camera), sticky = true)
     }
 
+    private fun onPictureStarted(width: Int, height: Int, syncDelayMs: Int) {
+        if (leaving) return
+        applyVideoSize(width, height)
+        audioSticky = false
+        renderStatus()
+        scheduleStatusHide()
+        rememberPlayingSource()
+        if (!pictureStarted) {
+            pictureStarted = true
+            blankWatch.onOpened(SystemClock.elapsedRealtime())
+            handler.removeCallbacks(blankPoll)
+            handler.post(blankPoll)
+        }
+        startAudio(syncDelayMs)
+    }
+
+    private fun rememberPlayingSource() {
+        val remembered = when (intent.getStringExtra(EXTRA_KIND)) {
+            KIND_USB -> {
+                val device = SourceCatalog(this).findUsbDevice(intentUsbName() ?: return) ?: return
+                RememberedSource(
+                    kind = ListedSource.Kind.USB_UVC,
+                    vendorId = device.vendorId,
+                    productId = device.productId,
+                )
+            }
+            KIND_CAMERA2 -> {
+                val cameraId = intent.getStringExtra(EXTRA_CAMERA_ID) ?: return
+                RememberedSource(
+                    kind = ListedSource.Kind.CAMERA2_EXTERNAL,
+                    cameraId = cameraId,
+                )
+            }
+            else -> return
+        }
+        LastSourceStore(this).save(remembered)
+    }
+
     private fun startAudio(syncDelayMs: Int) {
         if (audioStarted || leaving || recordRequestInFlight) return
         pendingSyncDelay = syncDelayMs
@@ -278,6 +385,7 @@ class PlayerActivity : AppCompatActivity() {
             productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
             usbDeviceName = intentUsbName(),
             syncDelayMs = syncDelayMs,
+            exclusionPolicy = settings.exclusionPolicy,
         ) { status ->
             if (leaving) return@AudioLoopback
             when (status) {
@@ -345,6 +453,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun toggleZoom() {
+        if (settings.lockControls) return
         zoomFill = !zoomFill
         binding.videoFrame.setCropToFill(zoomFill)
         binding.zoomButton.setText(if (zoomFill) R.string.fit_screen else R.string.zoom_to_fill)
@@ -360,7 +469,8 @@ class PlayerActivity : AppCompatActivity() {
     private fun pictureDescription(): String {
         if (videoWidth <= 0 || videoHeight <= 0) return "not started"
         val fit = if (zoomFill) "zoom to fill" else "fit"
-        return "${videoWidth}x${videoHeight}, $fit"
+        val hold = if (frozen) ", frozen" else ""
+        return "${videoWidth}x${videoHeight}, $fit$hold"
     }
 
     private fun renderStatus() {
@@ -375,6 +485,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun toggleDiagnostics() {
+        if (settings.lockControls) return
         if (binding.diagnostics.visibility == View.VISIBLE) {
             hideDiagnostics()
             return
@@ -386,6 +497,7 @@ class PlayerActivity : AppCompatActivity() {
                 productHint = intent.getStringExtra(EXTRA_AUDIO_HINT),
                 directUsb = audio?.directUsbNote() ?: "not started",
                 picture = pictureDescription(),
+                policy = settings.exclusionPolicy,
             )
         } catch (error: Exception) {
             "Diagnostics failed: ${error.message ?: error.javaClass.simpleName}"
@@ -403,7 +515,249 @@ class PlayerActivity : AppCompatActivity() {
     private fun showChrome() {
         binding.backBar.visibility = View.VISIBLE
         handler.removeCallbacks(hideChrome)
-        handler.postDelayed(hideChrome, CHROME_HIDE_MS)
+        handler.postDelayed(hideChrome, settings.controlsAutohideSeconds * 1_000L)
+    }
+
+    private fun applyControlPolicy() {
+        val locked = settings.lockControls
+        binding.backButton.visibility = if (locked) View.GONE else View.VISIBLE
+        binding.zoomButton.visibility = if (locked) View.GONE else View.VISIBLE
+        binding.snapshotButton.visibility = if (settings.enableSnapshot) View.VISIBLE else View.GONE
+        binding.freezeButton.visibility = if (settings.enableFreeze) View.VISIBLE else View.GONE
+        binding.audioMeter.visibility = if (settings.showAudioMeter) View.VISIBLE else View.GONE
+        if (locked) hideDiagnostics()
+        if (!settings.enableFreeze && frozen) clearFreeze()
+    }
+
+    private fun onUserLeavePlayback() {
+        if (settings.lockControls) {
+            if (binding.diagnostics.visibility == View.VISIBLE) hideDiagnostics()
+            showChrome()
+            return
+        }
+        if (binding.diagnostics.visibility == View.VISIBLE) {
+            hideDiagnostics()
+        } else {
+            finishWithNotice(null)
+        }
+    }
+
+    private fun trackLockHold(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                lockDownX = event.x
+                lockDownY = event.y
+                handler.removeCallbacks(lockHold)
+                handler.postDelayed(lockHold, LOCK_HOLD_MS)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val slop = ViewConfiguration.get(this).scaledTouchSlop
+                if (abs(event.x - lockDownX) > slop || abs(event.y - lockDownY) > slop) {
+                    handler.removeCallbacks(lockHold)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handler.removeCallbacks(lockHold)
+        }
+    }
+
+    private fun toggleLocalLock() {
+        settings = appSettings.current()
+        if (settings.lockManaged) {
+            if (settings.lockControls) {
+                Toast.makeText(this, R.string.controls_locked_by_admin, Toast.LENGTH_SHORT).show()
+            }
+            applyControlPolicy()
+            return
+        }
+        val locked = !settings.lockControls
+        appSettings.setLocalLock(locked)
+        settings = appSettings.current()
+        applyControlPolicy()
+        Toast.makeText(
+            this,
+            if (locked) R.string.controls_locked else R.string.controls_unlocked,
+            Toast.LENGTH_SHORT,
+        ).show()
+        showChrome()
+    }
+
+    private fun toggleFreeze() {
+        if (!settings.enableFreeze || freezeInFlight) return
+        if (frozen) clearFreeze() else freezePicture()
+    }
+
+    private fun freezePicture() {
+        val view = binding.preview
+        if (view.width < 2 || view.height < 2 || !view.holder.surface.isValid) {
+            Toast.makeText(this, R.string.freeze_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        freezeInFlight = true
+        try {
+            PixelCopy.request(view, bitmap, { result ->
+                freezeInFlight = false
+                if (leaving) {
+                    bitmap.recycle()
+                    return@request
+                }
+                if (result != PixelCopy.SUCCESS) {
+                    bitmap.recycle()
+                    Toast.makeText(this, R.string.freeze_failed, Toast.LENGTH_SHORT).show()
+                    return@request
+                }
+                frozenBitmap?.recycle()
+                frozenBitmap = bitmap
+                frozen = true
+                binding.freezeFrame.setImageBitmap(bitmap)
+                binding.freezeFrame.visibility = View.VISIBLE
+                binding.frozenBanner.visibility = View.VISIBLE
+                binding.noSignal.visibility = View.GONE
+                binding.freezeButton.setText(R.string.live)
+                showChrome()
+            }, handler)
+        } catch (_: Exception) {
+            freezeInFlight = false
+            bitmap.recycle()
+            Toast.makeText(this, R.string.freeze_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun clearFreeze() {
+        frozen = false
+        freezeInFlight = false
+        binding.freezeFrame.setImageDrawable(null)
+        binding.freezeFrame.visibility = View.GONE
+        binding.frozenBanner.visibility = View.GONE
+        frozenBitmap?.recycle()
+        frozenBitmap = null
+        binding.freezeButton.setText(R.string.freeze)
+        renderNoSignal()
+    }
+
+    private fun onSnapshotClicked() {
+        if (!settings.enableSnapshot || snapshotInFlight) return
+        if (needsLegacyStoragePermission()) {
+            storageRequest.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
+        captureSnapshot()
+    }
+
+    private fun needsLegacyStoragePermission(): Boolean {
+        return Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun captureSnapshot() {
+        if (snapshotInFlight || leaving) return
+        val held = frozenBitmap
+        if (held != null && !held.isRecycled) {
+            saveSnapshot(held, recycleAfter = false)
+            return
+        }
+        val view = binding.preview
+        if (view.width < 2 || view.height < 2 || !view.holder.surface.isValid) {
+            Toast.makeText(this, R.string.snapshot_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        snapshotInFlight = true
+        try {
+            PixelCopy.request(view, bitmap, { result ->
+                snapshotInFlight = false
+                if (leaving) {
+                    bitmap.recycle()
+                    return@request
+                }
+                if (result == PixelCopy.SUCCESS) {
+                    saveSnapshot(bitmap, recycleAfter = true)
+                } else {
+                    bitmap.recycle()
+                    Toast.makeText(this, R.string.snapshot_failed, Toast.LENGTH_SHORT).show()
+                }
+            }, handler)
+        } catch (_: Exception) {
+            snapshotInFlight = false
+            bitmap.recycle()
+            Toast.makeText(this, R.string.snapshot_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun saveSnapshot(bitmap: Bitmap, recycleAfter: Boolean) {
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+        val saved = try {
+            SnapshotSaver(this).save(bitmap, legacyStorageGranted = granted)
+        } catch (_: Exception) {
+            null
+        }
+        if (saved == null) {
+            Toast.makeText(this, R.string.snapshot_failed, Toast.LENGTH_SHORT).show()
+        } else {
+            showSnapshotSaved(bitmap, saved.publicPictures)
+        }
+        if (recycleAfter && !bitmap.isRecycled) bitmap.recycle()
+    }
+
+    private fun showSnapshotSaved(bitmap: Bitmap, publicPictures: Boolean) {
+        val message = getString(if (publicPictures) R.string.snapshot_saved else R.string.snapshot_saved_private)
+        binding.snapshotMessage.text = message
+        if (!bitmap.isRecycled) {
+            val width = 192
+            val height = (width * bitmap.height / bitmap.width.coerceAtLeast(1)).coerceAtLeast(1)
+            binding.snapshotThumb.setImageBitmap(Bitmap.createScaledBitmap(bitmap, width, height, true))
+        }
+        binding.snapshotConfirm.visibility = View.VISIBLE
+        handler.removeCallbacks(hideSnapshotConfirm)
+        handler.postDelayed(hideSnapshotConfirm, SNAPSHOT_CONFIRM_MS)
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        showChrome()
+    }
+
+    private fun sampleBlank() {
+        if (leaving || !pictureStarted) return
+        if (frozen) {
+            binding.noSignal.visibility = View.GONE
+            return
+        }
+        val view = binding.preview
+        if (view.width < 2 || view.height < 2 || !view.holder.surface.isValid) return
+        val bitmap = Bitmap.createBitmap(BLANK_SAMPLE_WIDTH, BLANK_SAMPLE_HEIGHT, Bitmap.Config.ARGB_8888)
+        try {
+            PixelCopy.request(view, bitmap, { result ->
+                val blank = if (result == PixelCopy.SUCCESS) {
+                    val pixels = IntArray(BLANK_SAMPLE_WIDTH * BLANK_SAMPLE_HEIGHT)
+                    bitmap.getPixels(
+                        pixels,
+                        0,
+                        BLANK_SAMPLE_WIDTH,
+                        0,
+                        0,
+                        BLANK_SAMPLE_WIDTH,
+                        BLANK_SAMPLE_HEIGHT,
+                    )
+                    BlankFrame.isMostlyBlack(pixels)
+                } else {
+                    null
+                }
+                bitmap.recycle()
+                if (leaving) return@request
+                blankWatch.onSample(SystemClock.elapsedRealtime(), blank, frozen)
+                renderNoSignal()
+            }, handler)
+        } catch (_: Exception) {
+            bitmap.recycle()
+        }
+    }
+
+    private fun renderNoSignal() {
+        binding.noSignal.visibility = if (blankWatch.visible && !frozen) View.VISIBLE else View.GONE
     }
 
     private fun finishWithNotice(message: String?) {
@@ -433,7 +787,12 @@ class PlayerActivity : AppCompatActivity() {
         const val KIND_USB = "usb"
         const val KIND_CAMERA2 = "camera2"
 
-        private const val CHROME_HIDE_MS = 4_000L
         private const val STATUS_HIDE_MS = 3_000L
+        private const val LOCK_HOLD_MS = 3_000L
+        private const val BLANK_POLL_MS = 2_000L
+        private const val METER_POLL_MS = 100L
+        private const val SNAPSHOT_CONFIRM_MS = 2_500L
+        private const val BLANK_SAMPLE_WIDTH = 32
+        private const val BLANK_SAMPLE_HEIGHT = 18
     }
 }

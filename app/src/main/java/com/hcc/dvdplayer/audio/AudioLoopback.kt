@@ -22,7 +22,9 @@ import androidx.core.content.ContextCompat
 import android.hardware.usb.UsbConstants
 import com.hcc.dvdplayer.logic.AudioFormatPlanner
 import com.hcc.dvdplayer.logic.CaptureSourceFilter
+import com.hcc.dvdplayer.logic.ExclusionPolicy
 import com.hcc.dvdplayer.logic.PcmDelayLine
+import com.hcc.dvdplayer.logic.PcmLevel
 import com.hcc.dvdplayer.logic.UacPlayback
 
 /**
@@ -47,6 +49,7 @@ class AudioLoopback(
     private val productHint: String?,
     private val usbDeviceName: String?,
     private val syncDelayMs: Int,
+    private val exclusionPolicy: ExclusionPolicy = ExclusionPolicy.DEFAULT,
     private val listener: (Status) -> Unit,
 ) {
     enum class Status {
@@ -72,8 +75,12 @@ class AudioLoopback(
     private var status = Status.STOPPED
     private var quietPolls = 0
     @Volatile private var directUsbNote: String = "not started"
+    @Volatile private var pcmLevel = 0f
 
     fun directUsbNote(): String = directUsbNote
+
+    /** Latest PCM peak, 0 for silence and 1 for full scale. */
+    fun level(): Float = pcmLevel
 
     fun start() {
         if (running) return
@@ -230,13 +237,17 @@ class AudioLoopback(
     }
 
     private fun tryDirectUsb(requirePcm: Boolean): Boolean {
-        val target = CaptureSourceFilter.directUsbDeviceName(usbDeviceName, connectedUsbDevices())
+        val target = CaptureSourceFilter.directUsbDeviceName(
+            usbDeviceName,
+            connectedUsbDevices(),
+            exclusionPolicy,
+        )
         if (target == null) {
             directUsbNote = "no capture-card audio interface to open"
             Log.w(TAG, directUsbNote)
             return false
         }
-        val capture = UsbUacCapture(appContext, target)
+        val capture = UsbUacCapture(appContext, target, exclusionPolicy)
         val session = capture.open()
         if (session == null) {
             directUsbNote = "direct USB audio did not open"
@@ -443,7 +454,10 @@ class AudioLoopback(
         while (running && !line.primed() && SystemClock.elapsedRealtime() < prerollDeadline) {
             val got = read(tmp)
             if (got < 0) return false
-            if (got > 0) line.write(tmp, 0, got)
+            if (got > 0) {
+                pcmLevel = PcmLevel.peakUnit(tmp, got)
+                line.write(tmp, 0, got)
+            }
         }
         if (requirePcm && !line.primed()) {
             directUsbNote = "direct USB audio produced no PCM"
@@ -461,7 +475,11 @@ class AudioLoopback(
         while (running) {
             val got = read(tmp)
             if (got < 0) return false
-            if (got == 0) continue
+            if (got == 0) {
+                pcmLevel = 0f
+                continue
+            }
+            pcmLevel = PcmLevel.peakUnit(tmp, got)
             line.write(tmp, 0, got)
             if (line.queued() > plan.delayBytes * 4) line.trimTo(plan.delayBytes)
             if (!line.primed()) continue
@@ -494,7 +512,13 @@ class AudioLoopback(
             productName = info.productName?.toString(),
             address = audioAddress(info),
         )
-        return !CaptureSourceFilter.isBlockedAudio(identity, connectedUsbDevices(), productHint, usbDeviceName)
+        return !CaptureSourceFilter.isBlockedAudio(
+            identity,
+            connectedUsbDevices(),
+            productHint,
+            usbDeviceName,
+            exclusionPolicy,
+        )
     }
 
     private fun usbInputs(): List<AudioDeviceInfo> {
@@ -505,7 +529,13 @@ class AudioLoopback(
                 address = audioAddress(info),
             )
         }
-        return CaptureSourceFilter.selectAudioInputIndexes(identities, productHint, connectedUsbDevices(), usbDeviceName)
+        return CaptureSourceFilter.selectAudioInputIndexes(
+            identities,
+            productHint,
+            connectedUsbDevices(),
+            usbDeviceName,
+            exclusionPolicy,
+        )
             .map { index -> raw[index] }
     }
 

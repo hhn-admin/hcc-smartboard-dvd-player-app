@@ -241,6 +241,93 @@ class CaptureSourceFilterTest {
         )
     }
 
+    @Test
+    fun extraVendorIdsAreExcludedAlongsideSmart() {
+        val policy = ExclusionPolicy(excludeSmartDevices = true, extraVendorIds = setOf(0x9999))
+        assertTrue(
+            CaptureSourceFilter.isExcludedUsb(0x9999, "USB3.0 HD Video Capture", null, policy = policy),
+        )
+        val devices = listOf(
+            usb(CaptureSourceFilter.SMART_VENDOR_ID, "SMART Ultra HD Camera", "SMART Technologies"),
+            usb(0x9999, "Other Grabber", "Other"),
+            usb(0x345F, "USB3.0 HD Video Capture", "MacroSilicon"),
+        )
+        val chosen = CaptureSourceFilter.selectUsbVideo(
+            devices,
+            { it.vendorId },
+            { it.productName },
+            { it.manufacturerName },
+            policy,
+        )
+        assertEquals(listOf("USB3.0 HD Video Capture"), chosen.map { it.productName })
+    }
+
+    @Test
+    fun turningOffSmartExclusionListsTheWebcamWhenItIsTheOnlyVideoDevice() {
+        val policy = ExclusionPolicy(excludeSmartDevices = false)
+        assertFalse(
+            CaptureSourceFilter.isExcludedUsb(
+                CaptureSourceFilter.SMART_VENDOR_ID,
+                "SMART Ultra HD Camera",
+                "SMART Technologies",
+                policy = policy,
+            ),
+        )
+        val devices = listOf(
+            usb(CaptureSourceFilter.SMART_VENDOR_ID, "SMART Ultra HD Camera", "SMART Technologies"),
+        )
+        val chosen = CaptureSourceFilter.selectUsbVideo(
+            devices,
+            { it.vendorId },
+            { it.productName },
+            { it.manufacturerName },
+            policy,
+        )
+        assertEquals(listOf("SMART Ultra HD Camera"), chosen.map { it.productName })
+    }
+
+    @Test
+    fun anExtraExcludedDongleDoesNotBecomeTheGenericAudioInput() {
+        val policy = ExclusionPolicy(extraVendorIds = setOf(0x9999))
+        val extra = UsbIdentity(
+            vendorId = 0x9999,
+            deviceName = "/dev/bus/usb/001/004",
+            productName = "Other Dongle",
+            manufacturerName = null,
+            hasAudioInterface = true,
+        )
+        val stick = UsbIdentity(
+            vendorId = 0x534D,
+            deviceName = "/dev/bus/usb/001/005",
+            productName = null,
+            manufacturerName = "MACROSILICON",
+            productId = 0x2109,
+            hasAudioInterface = true,
+        )
+        assertTrue(
+            CaptureSourceFilter.isBlockedAudio(
+                AudioInputIdentity("USB Audio", "/dev/bus/usb/001/004"),
+                listOf(extra, stick),
+                playingDeviceName = stick.deviceName,
+                policy = policy,
+            ),
+        )
+        assertEquals(
+            "use: generic USB audio from the capture card",
+            CaptureSourceFilter.audioDecision(
+                AudioInputIdentity("USB Audio", "card=2;device=0"),
+                listOf(extra, stick),
+                "MACROSILICON",
+                stick.deviceName,
+                policy,
+            ),
+        )
+        assertEquals(
+            stick.deviceName,
+            CaptureSourceFilter.directUsbDeviceName(stick.deviceName, listOf(extra, stick), policy),
+        )
+    }
+
     private fun usb(vendorId: Int, product: String?, manufacturer: String?): UsbIdentity {
         return UsbIdentity(vendorId, "/dev/bus/usb/001/001", product, manufacturer)
     }

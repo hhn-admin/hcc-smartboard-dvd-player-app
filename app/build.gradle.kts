@@ -6,8 +6,8 @@ plugins {
 // MDM updates identify the app by applicationId (com.hcc.dvdplayer) and require a
 // higher versionCode signed with the same certificate. Do not change applicationId.
 // Bump both version fields together, then tag the commit v<hdmiVersionName>.
-val hdmiVersionCode = 8
-val hdmiVersionName = "1.0.7"
+val hdmiVersionCode = 9
+val hdmiVersionName = "1.1.0"
 
 val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
 val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
